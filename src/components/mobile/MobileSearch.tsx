@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { AppText as Text } from '../common/AppText';
-import { useAnalytics, useDynamicFontSize, useMemoryMonitor } from '../../hooks';
+import { useAnalytics, useDebounce, useDynamicFontSize, useMemoryMonitor } from '../../hooks';
 import { AnalyticsEvent } from '../../utils/trackingEvents';
 import { FilterField, FilterSheet, FilterValues } from './FilterSheet';
 import { SearchHistory } from './SearchHistory';
@@ -103,13 +103,15 @@ export const MobileSearch = ({
 
   useMemoryMonitor({ componentId: 'MobileSearch', itemCount: results.length });
 
+  const debouncedQuery = useDebounce(query, 300);
+
   const suggestions = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     if (!q) return SUGGESTION_KEYWORDS.slice(0, 5);
     return SUGGESTION_KEYWORDS.filter(
       s => s.toLowerCase().includes(q) || q.includes(s.toLowerCase())
     ).slice(0, 6);
-  }, [query]);
+  }, [debouncedQuery]);
 
   const performSearch = useCallback(
     (searchQuery: string) => {
@@ -133,6 +135,17 @@ export const MobileSearch = ({
     },
     [filterValues, trackEvent]
   );
+
+  React.useEffect(() => {
+    const trimmed = debouncedQuery.trim();
+    if (trimmed) {
+      performSearch(trimmed);
+    } else {
+      setResults([]);
+      setHasSearched(false);
+    }
+  }, [debouncedQuery, performSearch]);
+
 
   const handleSubmit = useCallback(() => {
     performSearch(query);

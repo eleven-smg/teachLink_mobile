@@ -21,3 +21,4 @@ export * from './useScreenReader';
 export * from './useSwipe';
 export * from './useVideoGestures';
 export * from './useVoiceRecognition';
+export * from './useDebounce';
