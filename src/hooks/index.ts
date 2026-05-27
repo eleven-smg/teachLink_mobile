@@ -4,6 +4,7 @@ export * from './useBiometricAuth';
 export * from './useCamera';
 export * from './useCourseProgress';
 export * from './useDynamicFontSize';
+export * from './useFeatureFlags';
 export * from './useGestures';
 export * from './useHapticFeedback';
 export * from './useInAppPurchase';
