@@ -3,13 +3,14 @@
  */
 
 import { beforeEach, describe, expect, it } from '@jest/globals';
-import { BundleAnalyzer } from '../analyzers/BundleAnalyzer';
-import { MemoryAnalyzer, RenderAnalyzer } from '../analyzers/MemoryAnalyzer';
-import { DependencyAnalyzer, NetworkAnalyzer } from '../analyzers/NetworkAnalyzer';
-import { AssetAnalyzer, RuntimeAnalyzer } from '../analyzers/RuntimeAnalyzer';
-import { PerformanceAuditor } from '../PerformanceAuditor';
-import { RecommendationEngine } from '../RecommendationEngine';
-import { ReportGenerator } from '../ReportGenerator';
+
+import { BundleAnalyzer } from '../../audit/analyzers/BundleAnalyzer';
+import { MemoryAnalyzer, RenderAnalyzer } from '../../audit/analyzers/MemoryAnalyzer';
+import { DependencyAnalyzer, NetworkAnalyzer } from '../../audit/analyzers/NetworkAnalyzer';
+import { AssetAnalyzer, RuntimeAnalyzer } from '../../audit/analyzers/RuntimeAnalyzer';
+import { PerformanceAuditor } from '../../audit/PerformanceAuditor';
+import { RecommendationEngine } from '../../audit/RecommendationEngine';
+import { ReportGenerator } from '../../audit/ReportGenerator';
 
 describe('Performance Audit System', () => {
   let projectRoot: string;
@@ -176,7 +177,7 @@ describe('Performance Audit System', () => {
         overallScore: 75,
         trend: 'stable' as const,
         bundleAnalysis: {
-          totalSize: 1000000,
+          totalSize: 6000000,
           gzipSize: 300000,
           chunks: [],
           largeFiles: [],

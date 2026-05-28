@@ -5,21 +5,15 @@
  * pinch-to-zoom with animations on the native thread.
  */
 
-import React, { useCallback, useMemo } from 'react';
-import {
-  Gesture,
-  GestureDetector,
-  gestureHandlerRootHOC,
-} from 'react-native-gesture-handler';
+import React, { useCallback } from 'react';
+import { ViewStyle } from 'react-native';
+import { Gesture, GestureDetector, gestureHandlerRootHOC } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   runOnJS,
-  interpolate,
-  Extrapolate,
 } from 'react-native-reanimated';
-import { View, ViewStyle } from 'react-native';
 
 export interface UseOptimizedPinchZoomOptions {
   minScale?: number;
@@ -68,7 +62,7 @@ export function useOptimizedPinchZoom(options: UseOptimizedPinchZoomOptions = {}
     });
     if (resetOnEnd) {
       baseScale.value = 1;
-      runOnJS(onPinchEnd?.(1))();
+      if (onPinchEnd) runOnJS(onPinchEnd)(1);
     }
   }, [resetOnEnd, damping, mass, scale, baseScale, onPinchEnd]);
 
@@ -76,9 +70,9 @@ export function useOptimizedPinchZoom(options: UseOptimizedPinchZoomOptions = {}
   const pinch = Gesture.Pinch()
     .onStart(() => {
       // Called when pinch gesture starts
-      runOnJS(onPinchStart?.())();
+      if (onPinchStart) runOnJS(onPinchStart)();
     })
-    .onUpdate((event) => {
+    .onUpdate(event => {
       // Update scale on native thread
       const newScale = clamp(baseScale.value * event.scale, minScale, maxScale);
       scale.value = newScale;
@@ -87,7 +81,7 @@ export function useOptimizedPinchZoom(options: UseOptimizedPinchZoomOptions = {}
       focalPointX.value = event.focalX;
       focalPointY.value = event.focalY;
     })
-    .onEnd((event) => {
+    .onEnd(event => {
       // Finalize scale and spring back if needed
       const finalScale = clamp(baseScale.value * event.scale, minScale, maxScale);
       baseScale.value = finalScale;
@@ -98,14 +92,14 @@ export function useOptimizedPinchZoom(options: UseOptimizedPinchZoomOptions = {}
           mass,
           overshootClamping: true,
         });
-        runOnJS(onPinchEnd?.(1))();
+        if (onPinchEnd) runOnJS(onPinchEnd)(1);
       } else {
         scale.value = withSpring(finalScale, {
           damping,
           mass,
           overshootClamping: true,
         });
-        runOnJS(onPinchEnd?.(finalScale))();
+        if (onPinchEnd) runOnJS(onPinchEnd)(finalScale);
       }
     });
 
@@ -130,7 +124,7 @@ export function useOptimizedPinchZoom(options: UseOptimizedPinchZoomOptions = {}
 /**
  * Wrapper component for easy integration with pinch-enabled views
  */
-export function OptimizedPinchZoomView({
+export const OptimizedPinchZoomView = ({
   options,
   onPinchStart,
   onPinchEnd,
@@ -142,7 +136,7 @@ export function OptimizedPinchZoomView({
   onPinchEnd?: (scale: number) => void;
   children?: React.ReactNode;
   style?: ViewStyle;
-}) {
+}) => {
   const { gesture, animatedStyle } = useOptimizedPinchZoom({
     ...options,
     onPinchStart,
@@ -154,6 +148,6 @@ export function OptimizedPinchZoomView({
       <Animated.View style={[animatedStyle, style]}>{children}</Animated.View>
     </GestureDetector>
   );
-}
+};
 
 export default gestureHandlerRootHOC(OptimizedPinchZoomView);

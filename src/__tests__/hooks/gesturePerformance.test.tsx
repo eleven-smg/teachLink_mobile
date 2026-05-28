@@ -5,15 +5,15 @@
  * proper gesture recognition, and callback execution.
  */
 
+import { render } from '@testing-library/react-native';
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import { useOptimizedSwipe, OptimizedSwipeView } from '../hooks/useOptimizedSwipe';
-import { useOptimizedPinchZoom, OptimizedPinchZoomView } from '../hooks/useOptimizedPinchZoom';
-import { useOptimizedLongPress, OptimizedLongPressView } from '../hooks/useOptimizedLongPress';
-import {
-  createGesturePerformanceMonitor,
-  PerformanceMetrics,
-} from '../utils/gesturePerformance';
+import { Animated } from 'react-native';
+import { Gesture } from 'react-native-gesture-handler';
+
+import { useOptimizedLongPress } from '../../hooks/useOptimizedLongPress';
+import { useOptimizedPinchZoom } from '../../hooks/useOptimizedPinchZoom';
+import { useOptimizedSwipe } from '../../hooks/useOptimizedSwipe';
+import { createGesturePerformanceMonitor } from '../../utils/gesturePerformance';
 
 describe('Gesture Performance Optimization', () => {
   describe('Performance Monitoring', () => {
@@ -24,6 +24,7 @@ describe('Gesture Performance Optimization', () => {
 
       // Simulate frame captures
       for (let i = 0; i < 60; i++) {
+        jest.advanceTimersByTime(16.67);
         monitor.recordFrame();
       }
 
@@ -92,7 +93,7 @@ describe('Gesture Performance Optimization', () => {
       const { result } = renderHook(() =>
         useOptimizedSwipe({
           onSwipeEnd,
-        }),
+        })
       );
 
       expect(result.current.gesture).toBeDefined();
@@ -119,6 +120,8 @@ describe('Gesture Performance Optimization', () => {
         );
       };
 
+      render(<TestComponent />);
+
       // This would require more complex setup with react-native-gesture-handler
       // For now, we verify the hook structure
       expect(typeof onSwipeStart).toBe('function');
@@ -128,7 +131,7 @@ describe('Gesture Performance Optimization', () => {
       const { result } = renderHook(() =>
         useOptimizedSwipe({
           onSwipeEnd: jest.fn(),
-        }),
+        })
       );
 
       expect(typeof result.current.resetGesture).toBe('function');
@@ -147,7 +150,7 @@ describe('Gesture Performance Optimization', () => {
       const { result } = renderHook(() =>
         useOptimizedPinchZoom({
           onPinchEnd,
-        }),
+        })
       );
 
       expect(result.current.gesture).toBeDefined();
@@ -163,7 +166,7 @@ describe('Gesture Performance Optimization', () => {
           minScale: 1,
           maxScale: 3,
           onPinchEnd,
-        }),
+        })
       );
 
       // Verify initial state
@@ -178,7 +181,7 @@ describe('Gesture Performance Optimization', () => {
       const { result } = renderHook(() =>
         useOptimizedPinchZoom({
           resetOnEnd: true,
-        }),
+        })
       );
 
       expect(typeof result.current.resetPinch).toBe('function');
@@ -205,7 +208,7 @@ describe('Gesture Performance Optimization', () => {
       const { result } = renderHook(() =>
         useOptimizedLongPress({
           onLongPress,
-        }),
+        })
       );
 
       expect(result.current.gesture).toBeDefined();
@@ -220,11 +223,12 @@ describe('Gesture Performance Optimization', () => {
         useOptimizedLongPress({
           durationMs,
           onLongPress,
-        }),
+        })
       );
 
       // This test would require gesture simulation
       // For now, verify the hook accepts the duration
+      expect(result.current.reset).toBeDefined();
       expect(durationMs).toBe(500);
     });
 
@@ -232,7 +236,7 @@ describe('Gesture Performance Optimization', () => {
       const { result } = renderHook(() =>
         useOptimizedLongPress({
           onLongPress: jest.fn(),
-        }),
+        })
       );
 
       expect(typeof result.current.reset).toBe('function');
@@ -292,10 +296,10 @@ describe('Gesture Performance Optimization', () => {
 
 // Mock renderHook for testing
 const renderHook = (hook: () => any) => {
-  let result: any;
+  const result = { current: null as any };
 
   const TestComponent = () => {
-    result = hook();
+    result.current = hook();
     return null;
   };
 

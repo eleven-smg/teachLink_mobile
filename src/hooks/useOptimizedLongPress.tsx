@@ -114,7 +114,7 @@ export function useOptimizedLongPress(options: UseOptimizedLongPressOptions) {
         // Too much movement, cancel
         clearTimer();
         reset();
-        runOnJS(onCancel?.())();
+        if (onCancel) runOnJS(onCancel)();
       }
     })
     .onFinalize(event => {

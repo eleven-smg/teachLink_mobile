@@ -146,7 +146,7 @@ export function useOptimizedSwipe(options: UseOptimizedSwipeOptions = {}) {
             Date.now()
           );
           // Use runOnJS to call JS callback from native animation thread
-          runOnJS(onSwipeStart?.(swipeInfo))();
+          if (onSwipeStart) runOnJS(onSwipeStart)(swipeInfo);
           opacity.value = withSpring(0.8, { damping, mass });
         }
       }
@@ -162,12 +162,12 @@ export function useOptimizedSwipe(options: UseOptimizedSwipeOptions = {}) {
 
         // Check if swipe velocity is sufficient
         if (swipeInfo.velocity > velocityThreshold || swipeInfo.distance > minDistance * 1.5) {
-          runOnJS(onSwipeEnd?.(swipeInfo))();
+          if (onSwipeEnd) runOnJS(onSwipeEnd)(swipeInfo);
         } else {
-          runOnJS(onSwipeCancel?.())();
+          if (onSwipeCancel) runOnJS(onSwipeCancel)();
         }
       } else {
-        runOnJS(onSwipeCancel?.())();
+        if (onSwipeCancel) runOnJS(onSwipeCancel)();
       }
 
       runOnJS(resetGesture)();

@@ -331,3 +331,84 @@ jest.mock('@sentry/react-native', () => ({
   SDK_NAME: 'sentry.javascript.react-native',
   SDK_VERSION: '5.36.0',
 }));
+
+// Mock expo-sensors globally to avoid native device sensor requirements in Jest
+jest.mock('expo-sensors', () => ({
+  LightSensor: {
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+    removeAllListeners: jest.fn(),
+    setUpdateInterval: jest.fn(),
+    isAvailableAsync: jest.fn(() => Promise.resolve(true)),
+  },
+}));
+
+// Mock react-native-safe-area-context to prevent css-interop Safe Area Provider errors in tests
+jest.mock('react-native-safe-area-context', () => {
+  const RN = require('react-native');
+  return {
+    SafeAreaProvider: RN.View,
+    SafeAreaView: RN.View,
+    useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+    useSafeAreaFrame: () => ({ x: 0, y: 0, width: 390, height: 844 }),
+  };
+});
+
+// Mock react-native-reanimated with a stable custom lightweight implementation globally
+jest.mock('react-native-reanimated', () => {
+  const RN = require('react-native');
+  return {
+    default: RN.Animated,
+    View: RN.View,
+    Text: RN.Text,
+    ScrollView: RN.ScrollView,
+    Image: RN.Image,
+    useSharedValue: val => ({ value: val }),
+    useAnimatedStyle: fn => fn(),
+    withSpring: val => val,
+    withTiming: (val, config, callback) => {
+      if (callback) {
+        callback(true);
+      }
+      return val;
+    },
+    runOnJS: fn => fn,
+  };
+});
+
+// Mock react-native-gesture-handler globally
+jest.mock('react-native-gesture-handler', () => {
+  const RN = require('react-native');
+  return {
+    Gesture: {
+      Pan: () => ({
+        activeOffsetX: jest.fn().mockReturnThis(),
+        failOffsetY: jest.fn().mockReturnThis(),
+        onStart: jest.fn().mockReturnThis(),
+        onUpdate: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+        onEnd: jest.fn().mockReturnThis(),
+        onFinalize: jest.fn().mockReturnThis(),
+      }),
+      LongPress: () => ({
+        minDuration: jest.fn().mockReturnThis(),
+        maxDist: jest.fn().mockReturnThis(),
+        onStart: jest.fn().mockReturnThis(),
+        onUpdate: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+        onEnd: jest.fn().mockReturnThis(),
+        onFinalize: jest.fn().mockReturnThis(),
+      }),
+      Pinch: () => ({
+        onStart: jest.fn().mockReturnThis(),
+        onUpdate: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+        onEnd: jest.fn().mockReturnThis(),
+        onFinalize: jest.fn().mockReturnThis(),
+      }),
+      Simultaneous: RN.View,
+    },
+    GestureDetector: RN.View,
+    Swipeable: RN.View,
+    gestureHandlerRootHOC: jest.fn(c => c),
+  };
+});
