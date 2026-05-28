@@ -125,10 +125,15 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(() => Promise.resolve()),
 }));
 
-// Mock expo-device
+// Mock expo-device.  __esModule: true prevents Babel's _interopRequireWildcard
+// from copying values at import time, so tests can mutate properties directly.
 jest.mock('expo-device', () => ({
+  __esModule: true,
   isDevice: true,
   deviceName: 'Test Device',
+  deviceYearClass: 2021,
+  totalMemory: 4 * 1024 * 1024 * 1024, // 4 GB — high-end default
+  modelName: 'Test Model',
 }));
 
 // Mock expo-constants
@@ -270,50 +275,15 @@ jest.mock('expo-notifications', () => ({
   PermissionStatus: { GRANTED: 'granted', DENIED: 'denied', UNDETERMINED: 'undetermined' },
 }));
 
-// Mock expo-device
-jest.mock('expo-device', () => ({
-  isDevice: true,
-  deviceName: 'Test Device',
-}));
-
-// Mock expo-constants
-jest.mock('expo-constants', () => ({
-  expoConfig: {
-    extra: {
-      eas: {
-        projectId: 'test-project-id',
-      },
-    },
-  },
-}));
-
-// Mock expo-linking
-jest.mock('expo-linking', () => ({
-  createURL: jest.fn(path => `teachlink://${path}`),
-  addEventListener: jest.fn(() => ({ remove: jest.fn() })),
-  getInitialURL: jest.fn(() => Promise.resolve(null)),
-}));
-
-// Mock expo-notifications (override jest-expo's mock to add removed methods)
-jest.mock('expo-notifications', () => ({
-  setNotificationHandler: jest.fn(),
-  getPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'undetermined' })),
-  requestPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
-  getExpoPushTokenAsync: jest.fn(() =>
-    Promise.resolve({ data: 'ExponentPushToken[test-token-123]' })
+// Mock expo-battery
+jest.mock('expo-battery', () => ({
+  useLowPowerMode: jest.fn(() => false),
+  isLowPowerModeEnabledAsync: jest.fn(() => Promise.resolve(false)),
+  getBatteryLevelAsync: jest.fn(() => Promise.resolve(1)),
+  getPowerStateAsync: jest.fn(() =>
+    Promise.resolve({ batteryLevel: 1, batteryState: 1, lowPowerMode: false })
   ),
-  setNotificationChannelAsync: jest.fn(() => Promise.resolve()),
-  scheduleNotificationAsync: jest.fn(() => Promise.resolve('notification-id')),
-  cancelScheduledNotificationAsync: jest.fn(() => Promise.resolve()),
-  cancelAllScheduledNotificationsAsync: jest.fn(() => Promise.resolve()),
-  getBadgeCountAsync: jest.fn(() => Promise.resolve(0)),
-  setBadgeCountAsync: jest.fn(() => Promise.resolve()),
-  addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
-  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
-  removeNotificationSubscription: jest.fn(), // deprecated but used in codebase
-  getLastNotificationResponseAsync: jest.fn(() => Promise.resolve(null)),
-  AndroidImportance: { HIGH: 4, DEFAULT: 3 },
-  PermissionStatus: { GRANTED: 'granted', DENIED: 'denied', UNDETERMINED: 'undetermined' },
+  addLowPowerModeListener: jest.fn(() => ({ remove: jest.fn() })),
 }));
 
 // Mock @sentry/react-native to prevent Jest environment failure

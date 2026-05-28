@@ -1,3 +1,4 @@
+export * from './useAdaptiveFrameRate';
 export * from './useAdaptiveTheme';
 export * from './useAnalytics';
 export { AuthProvider, useAuth } from './useAuth';

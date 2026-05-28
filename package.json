@@ -34,7 +34,7 @@
     "audit:performance:compare": "tsx src/audit/cli.ts --compare --baseline ./audit-baseline.json",
     "audit:performance:watch": "tsx src/audit/cli.ts --watch",
     "audit:save-baseline": "cp audit-report.json audit-baseline.json && echo 'Baseline saved'",
-    "perf:analyze": "tsx src/audit/cli.ts --format html --output ./reports/performance-analysis"
+    "perf:analyze": "tsx src/audit/cli.ts --format html --output ./reports/performance-analysis",
     "perf:bundle": "node scripts/checkBundleSize.js",
     "perf:api": "node scripts/checkApiPerf.js",
     "analyze:routes": "node scripts/analyzeRouteSizes.js",
@@ -55,6 +55,7 @@
     "expo-asset": "~12.0.12",
     "expo-av": "^16.0.8",
     "expo-barcode-scanner": "~12.0.0",
+    "expo-battery": "^55.0.13",
     "expo-constants": "~18.0.13",
     "expo-device": "~8.0.10",
     "expo-font": "~14.0.11",
