@@ -85,29 +85,39 @@ export const FilterSheet = ({
   const overlayOpacity = useSharedValue(0);
   const [localValues, setLocalValues] = useState<FilterValues>(values);
   const { durationMultiplier } = useAdaptiveFrameRate();
+  const { animState, send, isVisible } = useAnimationStateMachine();
 
   const containerRef = useRef<View>(null);
   useFocusRestore(visible);
   const { containerProps } = useFocusTrap(containerRef, visible, { autoFocus: true });
 
   const open = useCallback(() => {
+    send('OPEN');
     translateY.value = withTiming(0, { duration: 280 * durationMultiplier });
-    overlayOpacity.value = withTiming(1, { duration: 280 * durationMultiplier });
-  }, [translateY, overlayOpacity, durationMultiplier]);
+    overlayOpacity.value = withTiming(1, { duration: 280 * durationMultiplier }, finished => {
+      if (finished) runOnJS(send)('ANIMATION_DONE');
+    });
+  }, [translateY, overlayOpacity, durationMultiplier, send]);
 
   const close = useCallback(() => {
+    send('CLOSE');
     translateY.value = withTiming(SHEET_HEIGHT, { duration: 220 * durationMultiplier });
     overlayOpacity.value = withTiming(0, { duration: 220 * durationMultiplier }, finished => {
-      if (finished) runOnJS(onClose)();
+      if (finished) {
+        runOnJS(send)('ANIMATION_DONE');
+        runOnJS(onClose)();
+      }
     });
-  }, [translateY, overlayOpacity, onClose, durationMultiplier]);
+  }, [translateY, overlayOpacity, onClose, durationMultiplier, send]);
 
   useEffect(() => {
-    if (visible) {
+    if (visible && (animState === 'CLOSED' || animState === 'CLOSING')) {
       setLocalValues(values);
       open();
+    } else if (!visible && (animState === 'OPEN' || animState === 'OPENING')) {
+      close();
     }
-  }, [visible, values, open]);
+  }, [visible, values, animState, open, close]);
 
   const handleSelect = useCallback((key: string, value: string) => {
     setLocalValues(prev => ({ ...prev, [key]: value }));
@@ -131,7 +141,7 @@ export const FilterSheet = ({
     transform: [{ translateY: translateY.value }],
   }));
 
-  if (!visible) return null;
+  if (!isVisible) return null;
 
   return (
     <ErrorBoundary boundaryName="FilterSheetModal">
