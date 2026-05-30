@@ -131,11 +131,62 @@ export interface StructuredLogEntry {
   source?: string;
 }
 
+// ─── BATCH QUEUE ──────────────────────────────────────────────────────────
+
+const BATCH_MAX_SIZE = 100;
+const BATCH_FLUSH_INTERVAL_MS = 5000;
+
+class BatchQueue {
+  private buffer: StructuredLogEntry[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
+  enqueue(entry: StructuredLogEntry): void {
+    this.buffer.push(entry);
+    if (this.buffer.length >= BATCH_MAX_SIZE) {
+      this.flush();
+    } else if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), BATCH_FLUSH_INTERVAL_MS);
+    }
+  }
+
+  flush(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.buffer.length === 0) return;
+    const batch = this.buffer.splice(0);
+    // Fire-and-forget: persist without blocking callers
+    persistBatch(batch).catch(() => {
+      /* silent */
+    });
+  }
+
+  /** Exposed for testing */
+  get size(): number {
+    return this.buffer.length;
+  }
+}
+
+export const logBatchQueue = new BatchQueue();
+
+/** Non-blocking drop-in for persistLogEntry — routes through the batch queue */
+export function enqueueLogEntry(entry: StructuredLogEntry): void {
+  logBatchQueue.enqueue(entry);
+}
+
 // ─── LOG TRANSPORT / PERSISTENCE ──────────────────────────────────────────
 
 const LOG_STORAGE_PREFIX = '@teachlink/logs';
 const MAX_LOG_FILES = 10;
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB per file
+
+/** Persist a batch of entries to AsyncStorage in a single operation */
+async function persistBatch(entries: StructuredLogEntry[]): Promise<void> {
+  for (const entry of entries) {
+    await persistLogEntry(entry);
+  }
+}
 
 /**
  * Store log entry in AsyncStorage for offline access and debugging.
@@ -148,7 +199,6 @@ export async function persistLogEntry(entry: StructuredLogEntry): Promise<void> 
       return;
     }
 
-    const timestamp = Date.now();
     const logData = JSON.stringify(entry);
 
     // Get current log buffer size
@@ -164,7 +214,7 @@ export async function persistLogEntry(entry: StructuredLogEntry): Promise<void> 
     // Append to current log
     const newLog = currentLog ? `${currentLog}\n${logData}` : logData;
     await AsyncStorage.setItem(storageKey, newLog);
-  } catch (error) {
+  } catch {
     // Silent fail for storage errors to avoid logging loops
     // In production, could send to Sentry
   }
@@ -199,7 +249,7 @@ async function rotateLogFiles(): Promise<void> {
 
     // Clear current log
     await AsyncStorage.setItem(`${LOG_STORAGE_PREFIX}/current`, '');
-  } catch (error) {
+  } catch {
     // Silent fail
   }
 }
@@ -301,6 +351,8 @@ export const loggingConfig = {
   storagePrefix: LOG_STORAGE_PREFIX,
   maxLogFiles: MAX_LOG_FILES,
   maxLogSize: MAX_LOG_SIZE,
+  batchMaxSize: BATCH_MAX_SIZE,
+  batchFlushIntervalMs: BATCH_FLUSH_INTERVAL_MS,
 };
 
 export default {
