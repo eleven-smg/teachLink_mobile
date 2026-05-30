@@ -298,6 +298,8 @@ Notification delivery now adapts to recent engagement to reduce fatigue and batt
 
 Engagement is currently recorded when users open notifications. Throttling is enforced per notification type before storing foreground notifications.
 
+For details on the notification deduplication and batching strategy, see `docs/NOTIFICATION_STRATEGY.md`.
+
 ## Resources
 
 - [Figma Design](https://www.figma.com/design/0RX6a19AbtemWmq8GLX1Y4/TeachLink-Project?node-id=0-1&t=gfrhW9c55Pxnfrl1-0)

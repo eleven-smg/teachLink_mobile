@@ -46,6 +46,7 @@ export const LEAK_SAMPLE_WINDOW = 6;
  * 10 MB, per the issue heuristic.
  */
 export const LEAK_GROWTH_THRESHOLD_BYTES = 10 * 1024 * 1024;
+export const MEMORY_PRESSURE_THRESHOLD = 0.7;
 
 /**
  * Hermes' instrumented-stats key names have drifted between engine versions.
@@ -141,6 +142,40 @@ export function detectLeak(snapshots: MemorySnapshot[]): boolean {
   const totalGrowth = window[window.length - 1].usedHeapBytes - window[0].usedHeapBytes;
 
   return totalGrowth > LEAK_GROWTH_THRESHOLD_BYTES;
+}
+
+/**
+ * Returns true when JS heap utilization exceeds the configured memory pressure
+ * threshold.
+ */
+export function detectMemoryPressure(snapshot: MemorySnapshot, threshold = MEMORY_PRESSURE_THRESHOLD): boolean {
+  return (
+    snapshot.available &&
+    snapshot.heapSizeBytes > 0 &&
+    snapshot.usedHeapBytes / snapshot.heapSizeBytes > threshold
+  );
+}
+
+export interface MemoryPressureStatus {
+  available: boolean;
+  heapSizeBytes: number;
+  usedHeapBytes: number;
+  externalBytes: number;
+  utilization: number;
+  isHighPressure: boolean;
+}
+
+export function getMemoryPressureStatus(snapshot: MemorySnapshot): MemoryPressureStatus {
+  const utilization = snapshot.heapSizeBytes > 0 ? snapshot.usedHeapBytes / snapshot.heapSizeBytes : 0;
+
+  return {
+    available: snapshot.available,
+    heapSizeBytes: snapshot.heapSizeBytes,
+    usedHeapBytes: snapshot.usedHeapBytes,
+    externalBytes: snapshot.externalBytes,
+    utilization,
+    isHighPressure: snapshot.available && snapshot.heapSizeBytes > 0 && utilization > MEMORY_PRESSURE_THRESHOLD,
+  };
 }
 
 /**

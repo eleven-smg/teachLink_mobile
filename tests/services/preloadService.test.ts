@@ -211,6 +211,18 @@ describe('PreloadService', () => {
       expect(mockRouter.prefetch).not.toHaveBeenCalled();
       expect(courseApi.getCourses).not.toHaveBeenCalled();
     });
+
+    it('skips predictive preloading when prefetch is paused', async () => {
+      preloadService.pausePrefetch();
+
+      const mockRouter = { prefetch: jest.fn() };
+      await preloadService.preload('/(tabs)', mockRouter);
+
+      expect(mockRouter.prefetch).not.toHaveBeenCalled();
+      expect(courseApi.getCourses).not.toHaveBeenCalled();
+
+      preloadService.resumePrefetch();
+    });
   });
 
   describe('Multi-tier Resource and Data Prefetching', () => {

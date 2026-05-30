@@ -1,14 +1,14 @@
 import * as Network from 'expo-network';
 
 import apiService from './api';
-import { offlineStorage, SyncOperation, SyncOperationInput } from './offlineStorage';
+import { offlineStorage, SyncOperation } from './offlineStorage';
 import syncEntityManager from './sync/syncEntityManager';
 import { useSettingsStore } from '../store/settingsStore';
 import logger from '../utils/logger';
 
 import type {
-  ConflictResolutionStrategy as VersionedConflictResolutionStrategy,
-  VersionedEntity,
+    ConflictResolutionStrategy as VersionedConflictResolutionStrategy,
+    VersionedEntity,
 } from './sync/types';
 
 
@@ -296,6 +296,13 @@ class SyncService {
     const index = this.eventListeners.indexOf(listener);
     if (index > -1) {
       this.eventListeners.splice(index, 1);
+    }
+  }
+
+  removeAllEventListeners(): void {
+    if (this.eventListeners.length > 0) {
+      this.eventListeners = [];
+      logger.info('SyncService: Cleared all sync event listeners due to memory pressure');
     }
   }
 

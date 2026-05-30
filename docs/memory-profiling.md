@@ -10,6 +10,22 @@ read on memory behaviour while navigating screens — without attaching an exter
 debugger — and especially for spotting a screen or interaction that leaks memory
 (heap that keeps climbing and never comes back down).
 
+## Automatic Memory Pressure Protection
+
+This app now includes an automatic memory pressure guard that activates when
+Hermes heap utilization exceeds **70%**. When high memory pressure is detected,
+the app proactively:
+
+- clears the Expo image memory and disk cache
+- pauses predictive route and asset prefetching
+- stops background request queue monitoring
+- stops automatic sync processing
+- clears internal sync event listeners
+
+This protection is designed to reduce the risk of OOM crashes on low-memory
+devices while allowing normal background work to resume once pressure recovers.
+
+
 It consists of three pieces:
 
 | Piece                  | File                                            | Role                                                                    |

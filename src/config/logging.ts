@@ -131,34 +131,60 @@ export interface StructuredLogEntry {
   source?: string;
 }
 
-// ─── LOG TRANSPORT / PERSISTENCE ──────────────────────────────────────────
+// ─── BATCH QUEUE ──────────────────────────────────────────────────────────
 
+const BATCH_MAX_SIZE = 20;
+const BATCH_FLUSH_INTERVAL_MS = 2000;
 const LOG_STORAGE_PREFIX = '@teachlink/logs';
 const MAX_LOG_FILES = 10;
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB per file
 
-let logBuffer: StructuredLogEntry[] = [];
-let flushTimeout: ReturnType<typeof setTimeout> | null = null;
-const BATCH_FLUSH_INTERVAL_MS = 2000;
-const BATCH_FLUSH_SIZE_LIMIT = 20;
+class BatchQueue {
+  private buffer: StructuredLogEntry[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
 
-/**
- * Flush all buffered logs to AsyncStorage in a single native bridge crossing.
- */
-export async function flushLogQueue(): Promise<void> {
-  if (logBuffer.length === 0) return;
-
-  const logsToWrite = [...logBuffer];
-  logBuffer = [];
-
-  if (flushTimeout) {
-    clearTimeout(flushTimeout);
-    flushTimeout = null;
+  enqueue(entry: StructuredLogEntry): void {
+    if (isDev && !process.env.LOG_TO_STORAGE) return;
+    this.buffer.push(entry);
+    if (this.buffer.length >= BATCH_MAX_SIZE) {
+      this.flush();
+    } else if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), BATCH_FLUSH_INTERVAL_MS);
+    }
   }
 
-  try {
-    const logData = logsToWrite.map(entry => JSON.stringify(entry)).join('\n');
+  flush(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.buffer.length === 0) return;
+    const batch = this.buffer.splice(0);
+    // Fire-and-forget: persist without blocking callers
+    persistBatch(batch).catch(() => {
+      /* silent */
+    });
+  }
 
+  /** Exposed for testing */
+  get size(): number {
+    return this.buffer.length;
+  }
+}
+
+export const logBatchQueue = new BatchQueue();
+
+/** Non-blocking drop-in for persistLogEntry — routes through the batch queue */
+export function enqueueLogEntry(entry: StructuredLogEntry): void {
+  logBatchQueue.enqueue(entry);
+}
+
+/** Persist a batch of entries to AsyncStorage in a single operation */
+async function persistBatch(entries: StructuredLogEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  try {
+    const logData = entries.map(entry => JSON.stringify(entry)).join('\n');
+    
     const storageKey = `${LOG_STORAGE_PREFIX}/current`;
     const currentLog = await AsyncStorage.getItem(storageKey);
     const currentSize = currentLog ? currentLog.length : 0;
@@ -174,22 +200,14 @@ export async function flushLogQueue(): Promise<void> {
   }
 }
 
-/**
- * Queue log entry in memory buffer for batching.
- * Flushes to AsyncStorage periodically or when buffer limit is reached.
- */
+/** Exposed for manual flush (e.g. app background) */
+export async function flushLogQueue(): Promise<void> {
+  logBatchQueue.flush();
+}
+
+/** Deprecated backward compatible handler */
 export async function persistLogEntry(entry: StructuredLogEntry): Promise<void> {
-  if (isDev && !process.env.LOG_TO_STORAGE) {
-    return;
-  }
-
-  logBuffer.push(entry);
-
-  if (logBuffer.length >= BATCH_FLUSH_SIZE_LIMIT) {
-    flushLogQueue();
-  } else if (!flushTimeout) {
-    flushTimeout = setTimeout(flushLogQueue, BATCH_FLUSH_INTERVAL_MS);
-  }
+  enqueueLogEntry(entry);
 }
 
 /**
@@ -323,6 +341,8 @@ export const loggingConfig = {
   storagePrefix: LOG_STORAGE_PREFIX,
   maxLogFiles: MAX_LOG_FILES,
   maxLogSize: MAX_LOG_SIZE,
+  batchMaxSize: BATCH_MAX_SIZE,
+  batchFlushIntervalMs: BATCH_FLUSH_INTERVAL_MS,
 };
 
 export default {

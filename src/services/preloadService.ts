@@ -1,5 +1,4 @@
 import * as Network from 'expo-network';
-
 import { mobileAnalyticsService } from './mobileAnalytics';
 import { offlineStorage } from './offlineStorage';
 import { useCourseProgressStore } from '../store/courseProgressStore';
@@ -24,6 +23,7 @@ const STATIC_DEFAULTS: Record<string, string[]> = {
 export class PreloadService {
   private transitionMatrix: Record<string, Record<string, number>> = {};
   private isInitialized = false;
+  private prefetchPaused = false;
 
   /**
    * Initialize PreloadService by restoring the transition matrix from storage.
@@ -116,6 +116,11 @@ export class PreloadService {
    * Preload route chunks, SWR data caches, and media assets for predicted destinations.
    */
   public async preload(currentScreen: string | null | undefined, router?: any): Promise<void> {
+    if (this.prefetchPaused) {
+      logger.debug('PreloadService: Skipped preload because prefetch is paused');
+      return;
+    }
+
     if (!this.isInitialized) {
       await this.init();
     }
@@ -243,6 +248,20 @@ export class PreloadService {
   /**
    * Reset transition matrix (mainly for testing or user data wipe)
    */
+  public pausePrefetch(): void {
+    if (!this.prefetchPaused) {
+      this.prefetchPaused = true;
+      logger.warn('PreloadService: Predictive prefetch paused due to memory pressure');
+    }
+  }
+
+  public resumePrefetch(): void {
+    if (this.prefetchPaused) {
+      this.prefetchPaused = false;
+      logger.info('PreloadService: Predictive prefetch resumed');
+    }
+  }
+
   public async clearMatrix(): Promise<void> {
     this.transitionMatrix = {};
     await offlineStorage.remove('@teachlink_nav_matrix');
