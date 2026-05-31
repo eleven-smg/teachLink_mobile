@@ -10,10 +10,6 @@ import {
   View,
 } from 'react-native';
 
-import { FilterField, FilterSheet, FilterValues } from './FilterSheet';
-import { SearchHistory } from './SearchHistory';
-import { SearchResultCard, SearchResultItem } from './SearchResultCard';
-import { VoiceSearch } from './VoiceSearch';
 import { sampleCourse } from '../../data/sampleCourse';
 import { useAnalytics, useDebounce, useDynamicFontSize, useMemoryMonitor } from '../../hooks';
 import { Course } from '../../types/course';
@@ -22,6 +18,10 @@ import { AnalyticsEvent } from '../../utils/trackingEvents';
 import { buildTrie, Trie } from '../../utils/trie';
 import { validateSearchQuery } from '../../utils/validation';
 import { AppText as Text } from '../common/AppText';
+import { FilterField, FilterSheet, FilterValues } from './FilterSheet';
+import { SearchHistory } from './SearchHistory';
+import { SearchResultCard, SearchResultItem } from './SearchResultCard';
+import { VoiceSearch } from './VoiceSearch';
 
 const DEFAULT_FILTERS: FilterField[] = [
   {
@@ -69,7 +69,24 @@ const SUGGESTION_KEYWORDS = [
 ];
 
 /** Module-level Trie built once from the seed keywords (O(k) per word). */
-const suggestionTrie: Trie = buildTrie(SUGGESTION_KEYWORDS);
+const suggestionTrie: Trie = (() => {
+  const trie = buildTrie(SUGGESTION_KEYWORDS) as Trie | { autocomplete?: unknown };
+  if (typeof trie.autocomplete === 'function') {
+    return trie as Trie;
+  }
+
+  return {
+    autocomplete: () => [],
+    insert: () => undefined,
+    insertMany: () => undefined,
+    search: () => false,
+    startsWith: () => false,
+    clear: () => undefined,
+    get wordCount() {
+      return 0;
+    },
+  } as Trie;
+})();
 
 function courseToSearchResult(course: Course): SearchResultItem {
   return {
@@ -117,7 +134,11 @@ export const MobileSearch = ({
   const [filterValues, setFilterValues] = useState<FilterValues>({});
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const { scale } = useDynamicFontSize();
+  const [isSearching, setIsSearching] = useState(false);
+  const searchAbortRef = React.useRef<AbortController | null>(null);
+  const fontSizeScale = useDynamicFontSize() as { scale?: (value: number) => number };
+  const scale =
+    typeof fontSizeScale.scale === 'function' ? fontSizeScale.scale : (value: number) => value;
   const { trackEvent } = useAnalytics();
 
   useMemoryMonitor({ componentId: 'MobileSearch', itemCount: results.length });
@@ -130,6 +151,7 @@ export const MobileSearch = ({
    */
   const suggestions = useMemo(() => {
     const q = debouncedQuery.trim();
+    if (typeof suggestionTrie.autocomplete !== 'function') return [];
     if (!q) return suggestionTrie.autocomplete('', 5);
     return suggestionTrie.autocomplete(q, 6);
   }, [debouncedQuery]);
@@ -159,11 +181,31 @@ export const MobileSearch = ({
 
   React.useEffect(() => {
     const trimmed = debouncedQuery.trim();
+
+    // cancel any in-flight search work (network requests in real implementation)
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+
     if (trimmed) {
-      performSearch(trimmed);
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      setIsSearching(true);
+
+      // performSearch is currently synchronous/local (sampleCourse),
+      // but we keep the cancellation pattern to prevent rapid re-renders.
+      try {
+        if (!controller.signal.aborted) {
+          performSearch(trimmed);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsSearching(false);
+        }
+      }
     } else {
-      setResults([]);
-      setHasSearched(false);
+      setIsSearching(false);
+      setResults((prev: SearchResultItem[]) => (prev.length === 0 ? prev : []));
+      setHasSearched((prev: boolean) => (prev ? false : prev));
     }
   }, [debouncedQuery, performSearch]);
 
@@ -218,7 +260,7 @@ export const MobileSearch = ({
             placeholder={placeholder}
             placeholderTextColor="#9CA3AF"
             value={query}
-            onChangeText={text => {
+            onChangeText={(text: string) => {
               setQuery(text);
               setQueryError(null);
             }}
@@ -261,7 +303,7 @@ export const MobileSearch = ({
       {showSuggestions && query.length > 0 && suggestions.length > 0 && !showResults && (
         <View style={styles.suggestSection}>
           <Text style={styles.suggestLabel}>Suggestions</Text>
-          {suggestions.map(s => (
+          {suggestions.map((s: string) => (
             <TouchableOpacity
               key={s}
               style={styles.suggestItem}
@@ -284,7 +326,7 @@ export const MobileSearch = ({
           <FlatList
             data={results}
             keyExtractor={item => item.id}
-            renderItem={({ item }) => (
+            renderItem={({ item }: { item: SearchResultItem }) => (
               <SearchResultCard item={item} onPress={() => onResultPress?.(item)} />
             )}
             contentContainerStyle={styles.resultsList}

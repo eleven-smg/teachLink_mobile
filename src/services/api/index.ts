@@ -1,7 +1,6 @@
 import apiClient from "./axios.config";
 
 export const apiService = {
-  // Example API methods
   get: (url: string, params?: any) => apiClient.get(url, { params }),
   post: (url: string, data: any) => apiClient.post(url, data),
   put: (url: string, data: any) => apiClient.put(url, data),
@@ -11,9 +10,12 @@ export const apiService = {
 export { clearCache, fetchWithSWR, invalidateCache } from "./cache";
 export { courseApi } from "./courseApi";
 export {
-    buildCursor, buildCursorCacheKey,
-    paginateWithCursor, parseCursor
+  buildCursor,
+  buildCursorCacheKey,
+  paginateWithCursor,
+  parseCursor,
 } from "./cursorPagination";
 export { userApi } from "./userApi";
+export { batchClient } from "./batchClient";
 
 export default apiService;
