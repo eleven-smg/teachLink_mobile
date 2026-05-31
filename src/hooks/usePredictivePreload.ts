@@ -40,10 +40,19 @@ export function usePredictivePreload() {
     []
   );
 
+  /**
+   * Read the live prediction-accuracy metric (hits / evaluated transitions).
+   */
+  const getPredictionAccuracy = useCallback(
+    () => preloadService.getPredictionAccuracy(),
+    []
+  );
+
   return {
     preload,
     predictNextScreens,
     recordTransition,
+    getPredictionAccuracy,
     preloadService,
   };
 }
