@@ -1,14 +1,14 @@
 import * as Network from 'expo-network';
-import { offlineStorage } from './offlineStorage';
-import { useSettingsStore } from '../store/settingsStore';
 import { useCourseProgressStore } from '../store/courseProgressStore';
 import { useAppStore } from '../store/index';
 import { useQuizStore } from '../store/quizStore';
-import { courseApi } from './api/courseApi';
-import { userApi } from './api/userApi';
+import { useSettingsStore } from '../store/settingsStore';
 import { ImageCache } from '../utils/imageCache';
 import logger from '../utils/logger';
+import { courseApi } from './api/courseApi';
+import { userApi } from './api/userApi';
 import { mobileAnalyticsService } from './mobileAnalytics';
+import { offlineStorage } from './offlineStorage';
 
 // Default navigation transitions to use when no history is available
 const STATIC_DEFAULTS: Record<string, string[]> = {
@@ -23,6 +23,7 @@ const STATIC_DEFAULTS: Record<string, string[]> = {
 export class PreloadService {
   private transitionMatrix: Record<string, Record<string, number>> = {};
   private isInitialized = false;
+  private prefetchPaused = false;
 
   /**
    * Initialize PreloadService by restoring the transition matrix from storage.
@@ -115,6 +116,11 @@ export class PreloadService {
    * Preload route chunks, SWR data caches, and media assets for predicted destinations.
    */
   public async preload(currentScreen: string | null | undefined, router?: any): Promise<void> {
+    if (this.prefetchPaused) {
+      logger.debug('PreloadService: Skipped preload because prefetch is paused');
+      return;
+    }
+
     if (!this.isInitialized) {
       await this.init();
     }
@@ -237,6 +243,20 @@ export class PreloadService {
   /**
    * Reset transition matrix (mainly for testing or user data wipe)
    */
+  public pausePrefetch(): void {
+    if (!this.prefetchPaused) {
+      this.prefetchPaused = true;
+      logger.warn('PreloadService: Predictive prefetch paused due to memory pressure');
+    }
+  }
+
+  public resumePrefetch(): void {
+    if (this.prefetchPaused) {
+      this.prefetchPaused = false;
+      logger.info('PreloadService: Predictive prefetch resumed');
+    }
+  }
+
   public async clearMatrix(): Promise<void> {
     this.transitionMatrix = {};
     await offlineStorage.remove('@teachlink_nav_matrix');

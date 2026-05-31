@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { memoryPressureService } from '../services/memoryPressureService';
 import { ImageCache } from '../utils/imageCache';
 import logger from '../utils/logger';
 
@@ -71,6 +72,11 @@ export function usePrefetchImages(
   const prefetch = useCallback(
     async (toFetch: (string | null | undefined)[]) => {
       try {
+        if (memoryPressureService.isUnderPressure()) {
+          logger.warn('Skipping image prefetch due to high memory pressure');
+          return [];
+        }
+
         setIsPrefetching(true);
 
         // Filter out null/undefined URLs
@@ -111,7 +117,7 @@ export function usePrefetchImages(
   // ─── Auto-prefetch on mount or URL change ─────────────────────────────────
 
   useEffect(() => {
-    if (!auto) return;
+    if (!auto || memoryPressureService.isUnderPressure()) return;
 
     const validUrls = urls.filter((url) => !!url) as string[];
     if (validUrls.length === 0) return;

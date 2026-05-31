@@ -1,13 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Network from 'expo-network';
+import { courseApi } from '../../src/services/api/courseApi';
+import { userApi } from '../../src/services/api/userApi';
 import { preloadService } from '../../src/services/preloadService';
-import { useSettingsStore } from '../../src/store/settingsStore';
 import { useCourseProgressStore } from '../../src/store/courseProgressStore';
 import { useAppStore } from '../../src/store/index';
 import { useQuizStore } from '../../src/store/quizStore';
-import { courseApi } from '../../src/services/api/courseApi';
-import { userApi } from '../../src/services/api/userApi';
+import { useSettingsStore } from '../../src/store/settingsStore';
 import { ImageCache } from '../../src/utils/imageCache';
-import * as Network from 'expo-network';
 
 // Mock offline storage
 const asyncStorageStore: Record<string, string> = {};
@@ -198,6 +198,18 @@ describe('PreloadService', () => {
 
       // Should run SWR fetches
       expect(courseApi.getCourses).toHaveBeenCalled();
+    });
+
+    it('skips predictive preloading when prefetch is paused', async () => {
+      preloadService.pausePrefetch();
+
+      const mockRouter = { prefetch: jest.fn() };
+      await preloadService.preload('/(tabs)', mockRouter);
+
+      expect(mockRouter.prefetch).not.toHaveBeenCalled();
+      expect(courseApi.getCourses).not.toHaveBeenCalled();
+
+      preloadService.resumePrefetch();
     });
   });
 
