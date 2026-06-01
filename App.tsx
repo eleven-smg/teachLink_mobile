@@ -3,8 +3,6 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef } from 'react';
 import { Alert, AppState, AppStateStatus, InteractionManager, LogBox } from 'react-native';
 
-
-import StorybookUI from './.rnstorybook';
 import './global.css';
 
 import * as Font from 'expo-font';
@@ -32,10 +30,6 @@ const appStartTime = Date.now();
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
-
-// SHOW_STORYBOOK flag based on environment variable
-const SHOW_STORYBOOK = process.env.EXPO_PUBLIC_STORYBOOK === 'true';
-
 
 // Centralized structured logging initialized lazily in services bootstrap useEffect
 // requireEnvVariables();
@@ -243,4 +237,9 @@ const App = () => {
   );
 };
 
-export default SHOW_STORYBOOK ? StorybookUI : App;
+const AppEntry = __DEV__ && process.env.EXPO_PUBLIC_STORYBOOK === 'true'
+  ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./.rnstorybook').default
+  : App;
+
+export default AppEntry;

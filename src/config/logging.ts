@@ -72,8 +72,9 @@ export enum LogLevel {
   TRACE = 4,
 }
 
-// Default log level based on environment
-export const DEFAULT_LOG_LEVEL = isDev ? LogLevel.DEBUG : LogLevel.INFO;
+// Keep production runtime logging to errors only. Warnings and lower-level
+// breadcrumbs are stripped from release builds to avoid verbose diagnostics.
+export const DEFAULT_LOG_LEVEL = isDev ? LogLevel.DEBUG : LogLevel.ERROR;
 
 // ─── LOG CONTEXT (THREAD-LOCAL STATE) ──────────────────────────────────────
 
