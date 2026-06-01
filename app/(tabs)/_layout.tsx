@@ -5,10 +5,10 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useTheme } from '@/store';
 
 const TabLayout = () => {
-  const colorScheme = useColorScheme();
+  const theme = useTheme();
 
   return (
     <ErrorBoundary boundaryName="TabsLayout">
@@ -16,7 +16,7 @@ const TabLayout = () => {
         // Keep all tab screens mounted so state and scroll positions survive tab switches
         detachInactiveScreens={false}
         screenOptions={{
-          tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+          tabBarActiveTintColor: Colors[theme].tint,
           headerShown: false,
           tabBarButton: HapticTab,
         }}

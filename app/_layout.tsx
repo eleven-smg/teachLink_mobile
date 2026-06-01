@@ -1,19 +1,20 @@
-import { Stack, useRouter, usePathname, useSegments } from 'expo-router';
+import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import React, { useCallback, useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
-import '../global.css'; // NativeWind CSS
 import { MemoryProfilerOverlay } from '../components/DevTools';
 import { RetryErrorBoundary } from '../components/ErrorBoundary/RetryErrorBoundary';
+import '../global.css'; // NativeWind CSS
 
 import { AnalyticsProvider, ErrorBoundary, OfflineIndicatorProvider } from '../src/components';
+import { KeyboardDelegateProvider } from '../src/components/common/KeyboardDelegateProvider';
 import { useAnalytics } from '../src/hooks';
 import { useDeepLink } from '../src/hooks/useDeepLink';
-import { sessionRestorationService } from '../src/services/sessionRestoration';
 import { preloadService } from '../src/services/preloadService';
+import { sessionRestorationService } from '../src/services/sessionRestoration';
 import { useAppStore } from '../src/store';
 import { getPathFromDeepLink } from '../src/utils/linkParser';
 import { prefetchExternalResources } from '../src/utils/resourceHints';
@@ -40,9 +41,8 @@ const ScreenTracker = () => {
   useEffect(() => {
     if (pathname) {
       trackScreen(pathname, { segments: segments.join('/') });
-      
-      // Track and record transitions + trigger predictive preloading
 
+      // Track and record transitions + trigger predictive preloading
       if (prevPathname.current !== pathname) {
         const fromScreen = prevPathname.current;
         prevPathname.current = pathname;
@@ -52,7 +52,7 @@ const ScreenTracker = () => {
         }
 
         sessionRestorationService.saveRoute(pathname);
-        
+
         // Trigger background preloading for predicted destinations
         preloadService.preload(pathname, router);
       }
@@ -137,9 +137,28 @@ const RootLayout = () => {
 
   return (
     <ErrorBoundary boundaryName="RootLayout">
-      {/* ✅ Wrap with RetryErrorBoundary */}
       <RetryErrorBoundary>
-        <AnalyticsProvider>
-          <ScreenTracker />
-          <ThemeSync />
+        {/*
+         * KeyboardDelegateProvider mounts exactly ONE pair of Keyboard
+         * listeners (show + hide) for the entire app.  All screens read
+         * keyboard state via useKeyboardState() / DelegatedKeyboardAvoidingView
+         * without registering their own listeners.
+         */}
+        <KeyboardDelegateProvider>
+          <AnalyticsProvider>
+            <ScreenTracker />
+            <ThemeSync />
+            <GestureHandlerRootView style={{ flex: 1 }}>
+              <OfflineIndicatorProvider>
+                <Stack screenOptions={{ headerShown: false }} />
+              </OfflineIndicatorProvider>
+            </GestureHandlerRootView>
+            {__DEV__ && <MemoryProfilerOverlay />}
+          </AnalyticsProvider>
+        </KeyboardDelegateProvider>
+      </RetryErrorBoundary>
+    </ErrorBoundary>
+  );
+};
 
+export default RootLayout;

@@ -1,12 +1,18 @@
 import * as Network from 'expo-network';
+
 import apiService from './api';
-import { offlineStorage, SyncOperation, SyncOperationInput } from './offlineStorage';
+import batchClient from './api/batchClient';
+import { offlineStorage, SyncOperation, SyncOperationType } from './offlineStorage';
 import syncEntityManager from './sync/syncEntityManager';
-import type {
-  ConflictResolutionStrategy as VersionedConflictResolutionStrategy,
-  VersionedEntity,
-} from './sync/types';
+import { useSettingsStore } from '../store/settingsStore';
+import { useDeviceStore } from '../store/deviceStore';
 import logger from '../utils/logger';
+
+import type {
+    ConflictResolutionStrategy as VersionedConflictResolutionStrategy,
+    VersionedEntity,
+} from './sync/types';
+
 
 // Sync service configuration
 interface SyncConfig {
@@ -54,6 +60,19 @@ class SyncService {
       batchSize: 10,
       ...config,
     };
+
+    // Subscribe to battery status changes to adjust sync frequency
+    useDeviceStore.subscribe(
+      (state: any, prevState: any) => {
+        if (state.isLowBattery !== prevState.isLowBattery) {
+          logger.info(`SyncService: Low battery status changed to ${state.isLowBattery}, restarting auto-sync`);
+          if (this.syncIntervalId) {
+            this.stopAutoSync();
+            this.startAutoSync();
+          }
+        }
+      }
+    );
   }
 
   /**
@@ -65,9 +84,12 @@ class SyncService {
       return;
     }
 
+    const isLowBattery = useDeviceStore.getState().isLowBattery;
+    const interval = isLowBattery ? 120000 : this.config.syncInterval; // 2 minutes if low battery
+
     this.syncIntervalId = setInterval(() => {
       this.syncPendingOperations();
-    }, this.config.syncInterval);
+    }, interval);
 
     logger.info('Auto sync started');
     this.emitEvent({ type: 'syncStarted', timestamp: Date.now() });
@@ -89,16 +111,30 @@ class SyncService {
    */
   async manualSync(): Promise<void> {
     logger.info('Manual sync triggered');
-    await this.syncPendingOperations();
+    await this.syncPendingOperations(true);
   }
 
   /**
    * Main sync process
    */
-  private async syncPendingOperations(): Promise<void> {
+  private async syncPendingOperations(isManual = false): Promise<void> {
     if (this.isSyncing) {
       logger.debug('Sync already in progress, skipping');
       return;
+    }
+
+    const settings = useSettingsStore.getState();
+    const { isLowBattery } = useDeviceStore.getState();
+
+    if (settings.dataSaverEnabled && !isManual) {
+      logger.debug('SyncService: Skipped auto-sync — Data Saver mode enabled');
+      return;
+    }
+
+    if (isLowBattery && !isManual) {
+      // Additional check: maybe we should even skip altogether in extreme cases,
+      // but "reduce frequency" is the requirement.
+      logger.debug('SyncService: Processing auto-sync in Low Battery mode (reduced frequency)');
     }
 
     // Check network connectivity
@@ -141,14 +177,62 @@ class SyncService {
   }
 
   /**
-   * Process a batch of operations
+   * Process a batch of operations — mutation types are combined into a single
+   * POST /api/batch request; READ operations continue on the individual path.
    */
   private async processBatch(operations: SyncOperation[]): Promise<void> {
-    const promises = operations.slice(0, this.config.maxConcurrentSyncs).map(op => 
-      this.processOperation(op)
-    );
+    const reads = operations.filter(op => op.type === 'READ');
+    const mutations = operations.filter(op => op.type !== 'READ');
 
-    await Promise.all(promises);
+    const readPromises = reads.map(op => this.processOperation(op));
+
+    const mutationPromises = mutations.map(op => {
+      const method = this.mapOperationToMethod(op.type);
+      if (!method) return this.processOperation(op);
+
+      return batchClient
+        .mutate(method, op.endpoint, op.data)
+        .then(async result => {
+          await offlineStorage.removeFromSyncQueue(op.id);
+          logger.info(`Batch operation completed: ${op.id}`);
+          this.emitEvent({
+            type: 'operationProcessed',
+            operationId: op.id,
+            data: result,
+            timestamp: Date.now(),
+          });
+        })
+        .catch(async (error: any) => {
+          logger.error(`Batch operation failed: ${op.id}`, error);
+          if (op.retries < op.maxRetries) {
+            await offlineStorage.incrementRetryCount(op.id);
+            setTimeout(
+              () => this.retryOperation(op.id),
+              this.calculateRetryDelay(op.retries),
+            );
+          } else {
+            this.handlePermanentFailure(op, error);
+          }
+          this.emitEvent({
+            type: 'syncFailed',
+            operationId: op.id,
+            error,
+            timestamp: Date.now(),
+          });
+        });
+    });
+
+    // mutate() calls above are synchronous enqueues; flush sends them as one request.
+    await Promise.all([batchClient.flush(), ...mutationPromises, ...readPromises]);
+  }
+
+  private mapOperationToMethod(
+    type: SyncOperationType,
+  ): 'POST' | 'PUT' | 'DELETE' | null {
+    if (type === 'CREATE') return 'POST';
+    if (type === 'UPDATE') return 'PUT';
+    if (type === 'DELETE') return 'DELETE';
+    return null;
   }
 
   /**
@@ -286,6 +370,13 @@ class SyncService {
     const index = this.eventListeners.indexOf(listener);
     if (index > -1) {
       this.eventListeners.splice(index, 1);
+    }
+  }
+
+  removeAllEventListeners(): void {
+    if (this.eventListeners.length > 0) {
+      this.eventListeners = [];
+      logger.info('SyncService: Cleared all sync event listeners due to memory pressure');
     }
   }
 

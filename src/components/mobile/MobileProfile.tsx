@@ -1,43 +1,41 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  BookOpen,
-  Camera,
-  ChevronDown,
-  ChevronUp,
-  Clock,
-  Edit3,
-  Globe,
-  Mail,
-  MapPin,
-  Save,
-  Trophy,
-  User,
-  UserCheck,
-  UserPlus,
-  Users,
-  X,
+    BookOpen,
+    Camera,
+    ChevronDown,
+    ChevronUp,
+    Clock,
+    Edit3,
+    Globe,
+    Mail,
+    MapPin,
+    Save,
+    Trophy,
+    User,
+    UserCheck,
+    UserPlus,
+    Users,
+    X,
 } from 'lucide-react-native';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Animated,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { useFormCache } from '../../hooks/useFormCache';
 import { PROFILE_FORM_CACHE_KEYS } from '../../services/formCache';
 import { configureNext } from '../../utils/layoutAnimation';
+import { AppText as Text } from '../common/AppText';
+import { CachedImage } from '../ui/CachedImage';
+import { Skeleton } from '../ui/Skeleton';
 import { Achievement, AchievementBadges } from './AchievementBadges';
 import { AvatarCamera } from './AvatarCamera';
 import { MobileFormInput } from './MobileFormInput';
 import { StatisticsDisplay } from './StatisticsDisplay';
-import { AppText as Text } from '../common/AppText';
-import { CachedImage } from '../ui/CachedImage';
-import { Skeleton } from '../ui/Skeleton';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -348,15 +346,16 @@ export const MobileProfile: React.FC<MobileProfileProps> = ({
   const textSecondary = isDark ? '#94a3b8' : '#64748b';
   const borderColor = isDark ? '#334155' : '#e2e8f0';
 
-  const getInitials = (name: string) =>
+  const getInitials = useCallback((name: string) =>
     name
       .split(' ')
       .map(n => n[0])
       .join('')
       .toUpperCase()
-      .slice(0, 2);
+      .slice(0, 2),
+  []);
 
-  const handleStartEdit = () => {
+  const handleStartEdit = useCallback(() => {
     setEditName(profile.name);
     setEditBio(profile.bio);
     setEditEmail(profile.email);
@@ -381,22 +380,22 @@ export const MobileProfile: React.FC<MobileProfileProps> = ({
     setFormErrors({});
     setShowAdvancedFields(false); // reset disclosure state on each edit session
     setIsEditing(true);
-  };
+  }, [profile, applyPrefillToFields]);
 
-  const handleToggleAdvancedFields = () => {
+  const handleToggleAdvancedFields = useCallback(() => {
     configureNext();
     setShowAdvancedFields(prev => !prev);
-  };
+  }, []);
 
-  const validateForm = (): Record<string, string> => {
+  const validateForm = useCallback((): Record<string, string> => {
     const errors: Record<string, string> = {};
     if (!editName.trim()) errors.name = 'Name is required';
     if (!editEmail.trim()) errors.email = 'Email is required';
     else if (!/\S+@\S+\.\S+/.test(editEmail)) errors.email = 'Enter a valid email address';
     return errors;
-  };
+  }, [editName, editEmail]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     const errors = validateForm();
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
@@ -422,25 +421,30 @@ export const MobileProfile: React.FC<MobileProfileProps> = ({
     });
     setIsSaving(false);
     setIsEditing(false);
-  };
+  }, [validateForm, editName, editBio, editEmail, editLocation, editWebsite, persistFields]);
 
-  const handleCancelEdit = () => {
+  const handleCancelEdit = useCallback(() => {
     setIsEditing(false);
     setFormErrors({});
-  };
+  }, []);
 
-  const handleAvatarConfirm = (uri: string) => {
+  const handleAvatarConfirm = useCallback((uri: string) => {
     setProfile(prev => ({ ...prev, avatar: uri }));
-  };
+  }, []);
 
-  const handleToggleFollow = (connectionId: string) => {
+  const handleToggleFollow = useCallback((connectionId: string) => {
     setProfile(prev => ({
       ...prev,
       connections: prev.connections.map(c =>
         c.id === connectionId ? { ...c, isFollowing: !c.isFollowing } : c
       ),
     }));
-  };
+  }, []);
+
+  const handleOpenCamera = useCallback(() => setIsCameraVisible(true), []);
+  const handleCloseCamera = useCallback(() => setIsCameraVisible(false), []);
+
+  const handleSelectTab = useCallback((tab: ProfileTab) => setActiveTab(tab), []);
 
   // Tab config
   const TABS: { key: ProfileTab; label: string }[] = [
@@ -497,7 +501,7 @@ export const MobileProfile: React.FC<MobileProfileProps> = ({
           <View style={styles.avatarRow}>
             <TouchableOpacity
               style={styles.avatarContainer}
-              onPress={() => setIsCameraVisible(true)}
+            onPress={handleOpenCamera}
               activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityLabel="Change avatar"
@@ -611,7 +615,7 @@ export const MobileProfile: React.FC<MobileProfileProps> = ({
           </View>
 
           {/* Quick stats strip */}
-          <View style={styles.statsStrip, { backgroundColor: cardBg, borderColor }]}>
+          <View style={[styles.statsStrip, { backgroundColor: cardBg, borderColor }]}>
             {stripItems.map((s, i) => (
               <View
                 key={`stat-${i}-${s.label}`}
@@ -637,7 +641,7 @@ export const MobileProfile: React.FC<MobileProfileProps> = ({
             <TouchableOpacity
               key={tab.key}
               style={styles.tabItem}
-              onPress={() => setActiveTab(tab.key)}
+              onPress={() => handleSelectTab(tab.key)}
               accessibilityRole="tab"
               accessibilityState={{ selected: activeTab === tab.key }}
               accessibilityLabel={`${tab.label} tab`}
@@ -910,7 +914,7 @@ export const MobileProfile: React.FC<MobileProfileProps> = ({
         visible={isCameraVisible}
         currentAvatar={profile.avatar}
         onConfirm={handleAvatarConfirm}
-        onClose={() => setIsCameraVisible(false)}
+        onClose={handleCloseCamera}
       />
     </SafeAreaView>
   );
