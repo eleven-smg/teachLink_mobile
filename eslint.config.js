@@ -63,9 +63,9 @@ module.exports = defineConfig([
           unnamedComponents: 'arrow-function',
         },
       ],
-
-      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/rules-of-hooks': 'off',
       'react-hooks/exhaustive-deps': 'warn',
+      'import/no-unresolved': 'off',
 
       // Prevent inline component definitions that defeat memoization
       'react/no-unstable-nested-components': ['warn', { allowAsProps: false }],

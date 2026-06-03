@@ -1,17 +1,20 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated,
-  Dimensions,
-  FlatList,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Animated,
+    Dimensions,
+    FlatList,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 
-import { CourseProgress, Lesson } from '../../types/course';
+import { useDebounceCallback } from '../../hooks';
+import { useAnalytics } from '../../hooks/useAnalytics';
 import { useSettingsStore } from '../../store/settingsStore';
+import { CourseProgress, Lesson } from '../../types/course';
+import { AnalyticsEvent } from '../../utils/trackingEvents';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -35,6 +38,7 @@ const LessonCarousel = ({
   onLastLessonNext,
   isLastLessonInSection = false,
 }: LessonCarouselProps) => {
+  const { trackEvent } = useAnalytics();
   const dataSaverEnabled = useSettingsStore(state => state.dataSaverEnabled);
   const flatListRef = useRef<FlatList<Lesson>>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -76,6 +80,29 @@ const LessonCarousel = ({
     []
   );
 
+  const debouncedScroll = useDebounceCallback((offsetX: number) => {
+    const index = Math.round(offsetX / SCREEN_WIDTH);
+    if (index >= 0 && index < lessons.length) {
+      setCurrentIndex(prevIndex => {
+        if (index !== prevIndex) {
+          onLessonChange(lessons[index].id, index);
+          return index;
+        }
+        return prevIndex;
+      });
+    }
+  }, 100);
+
+  const handleScroll = (event: any) => {
+    const offsetX = event.nativeEvent.contentOffset.x;
+    trackEvent(AnalyticsEvent.PERFORMANCE_METRIC, {
+      event_category: 'high_frequency',
+      event_name: 'lesson_carousel_scroll',
+      offsetX: Math.round(offsetX),
+    });
+    debouncedScroll(offsetX);
+  };
+
   const handleMomentumScrollEnd = useCallback(
     (event: { nativeEvent: { contentOffset: { x: number } } }) => {
       const index = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
@@ -86,6 +113,27 @@ const LessonCarousel = ({
     },
     [currentIndex, lessons, onLessonChange]
   );
+
+  // Debounced onScroll to prevent rapid state updates while dragging.
+  const scrollDebounceRef = useRef<number | null>(null);
+
+  const handleScroll = useCallback((event: { nativeEvent: { contentOffset: { x: number } } }) => {
+    const x = event.nativeEvent.contentOffset.x;
+    if (scrollDebounceRef.current) {
+      clearTimeout(scrollDebounceRef.current as any);
+    }
+    scrollDebounceRef.current = (setTimeout(() => {
+      handleMomentumScrollEnd({ nativeEvent: { contentOffset: { x } } });
+    }, 100) as unknown) as number;
+  }, [handleMomentumScrollEnd]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollDebounceRef.current) {
+        clearTimeout(scrollDebounceRef.current as any);
+      }
+    };
+  }, []);
 
   const currentLesson = lessons[currentIndex];
 
@@ -155,7 +203,9 @@ const LessonCarousel = ({
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
+        onScroll={handleScroll}
         onMomentumScrollEnd={handleMomentumScrollEnd}
+        onScroll={handleScroll}
         scrollEventThrottle={16}
         decelerationRate="fast"
         snapToInterval={SCREEN_WIDTH}

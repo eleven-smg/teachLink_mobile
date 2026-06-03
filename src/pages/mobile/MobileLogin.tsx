@@ -1,30 +1,31 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  AlertCircle,
-  Apple,
-  BookOpen,
-  Chrome,
-  Eye,
-  EyeOff,
-  Lock,
-  LogIn,
-  Mail,
+    AlertCircle,
+    Apple,
+    BookOpen,
+    Chrome,
+    Eye,
+    EyeOff,
+    Lock,
+    LogIn,
+    Mail,
 } from 'lucide-react-native';
 import React, { useEffect, useRef, useState } from 'react';
+import { Controller, useForm } from 'react-hook-form';
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
+
 
 import { BiometricInlineButton, BiometricPrompt } from '../../components/mobile/BiometricPrompt';
 import { MobileFormInput } from '../../components/mobile/MobileFormInput';
@@ -32,6 +33,11 @@ import { useBiometricAuth, useDynamicFontSize, useFormValidation } from '../../h
 import authService, { AuthResult } from '../../services/mobileAuth';
 import * as secureStorage from '../../services/secureStorage';
 import { validateEmail, validateRequired } from '../../utils/validation';
+
+interface LoginFormValues {
+  email: string;
+  password: string;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,17 +60,20 @@ export const MobileLogin: React.FC<MobileLoginProps> = ({
   onRegister,
   isDark = false,
 }) => {
-  // ── State ────────────────────────────────────────────────────────────────
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  // ── Form ─────────────────────────────────────────────────────────────────
+  const {
+    control,
+    handleSubmit,
+    setValue,
+    formState: { errors },
+  } = useForm<LoginFormValues>({ defaultValues: { email: '', password: '' } });
+
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
   const [showBiometricModal, setShowBiometricModal] = useState(false);
-  const [passwordFocused, setPasswordFocused] = useState(false);
 
-  const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
 
   const {
@@ -97,19 +106,16 @@ export const MobileLogin: React.FC<MobileLoginProps> = ({
         authService.getRememberedEmail(),
         secureStorage.isRememberMeEnabled(),
       ]);
-      if (savedEmail) setEmail(savedEmail);
+      if (savedEmail) setValue('email', savedEmail);
       if (savedRememberMe) setRememberMe(true);
     }
     loadRemembered();
-  }, []);
+  }, [setValue]);
 
   // ── Auto-trigger biometric on mount if enabled ───────────────────────────
   useEffect(() => {
     if (biometricEnabled && biometricAvailable) {
-      // Small delay so screen renders first
-      const timer = setTimeout(() => {
-        setShowBiometricModal(true);
-      }, 600);
+      const timer = setTimeout(() => setShowBiometricModal(true), 600);
       return () => clearTimeout(timer);
     }
   }, [biometricEnabled, biometricAvailable]);
@@ -130,14 +136,13 @@ export const MobileLogin: React.FC<MobileLoginProps> = ({
     setIsLoading(true);
     try {
       const result = await authService.login({
-        email: email.trim().toLowerCase(),
-        password,
+        email: data.email.trim().toLowerCase(),
+        password: data.password,
         rememberMe,
       });
       onLoginSuccess(result);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Login failed. Please try again.';
-      setError(msg);
+      setServerError(err instanceof Error ? err.message : 'Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -176,7 +181,7 @@ export const MobileLogin: React.FC<MobileLoginProps> = ({
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: bg }]}>
-      <KeyboardAvoidingView
+      <DelegatedKeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.kav}
       >
@@ -206,11 +211,11 @@ export const MobileLogin: React.FC<MobileLoginProps> = ({
           {/* ── Card ── */}
           <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
             {/* Error banner */}
-            {error && (
+            {displayError && (
               <View style={styles.errorBanner}>
                 <AlertCircle size={scale(14)} color="#dc2626" />
                 <Text allowFontScaling={false} style={styles.errorText}>
-                  {error}
+                  {displayError}
                 </Text>
               </View>
             )}
@@ -325,7 +330,7 @@ export const MobileLogin: React.FC<MobileLoginProps> = ({
             {/* Primary CTA */}
             <TouchableOpacity
               style={[styles.loginBtn, { opacity: isLoading ? 0.7 : 1 }]}
-              onPress={handlePasswordLogin}
+              onPress={handleSubmit(onSubmit)}
               disabled={isLoading}
               activeOpacity={0.85}
             >
@@ -427,7 +432,7 @@ export const MobileLogin: React.FC<MobileLoginProps> = ({
             </View>
           )}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </DelegatedKeyboardAvoidingView>
 
       {/* Biometric modal */}
       <BiometricPrompt

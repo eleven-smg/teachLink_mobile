@@ -1,5 +1,6 @@
 import React, { createContext, ReactNode, useContext, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
+
 import { crashReportingService } from '../../services/crashReporting';
 import { mobileAnalyticsService } from '../../services/mobileAnalytics';
 import webVitalsService from '../../services/webVitals';
@@ -49,8 +50,10 @@ export const AnalyticsProvider: React.FC<AnalyticsProviderProps> = ({ children }
     };
   }, []);
 
+  const value = React.useMemo(() => ({ service: mobileAnalyticsService }), []);
+
   return (
-    <AnalyticsContext.Provider value={{ service: mobileAnalyticsService }}>
+    <AnalyticsContext.Provider value={value}>
       <ErrorBoundary boundaryName="AnalyticsProvider">{children}</ErrorBoundary>
     </AnalyticsContext.Provider>
   );

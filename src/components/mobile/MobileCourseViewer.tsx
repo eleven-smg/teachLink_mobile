@@ -9,19 +9,23 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { AppText as Text } from '../common/AppText';
+import { ErrorBoundary } from '../common/ErrorBoundary';
+import PrimaryButton from '../common/PrimaryButton';
+import BookmarkButton from './BookmarkButton';
+import { CourseViewerSkeleton } from './CourseViewerSkeleton';
+import LessonCarousel from './LessonCarousel';
+import MobileSyllabus from './MobileSyllabus';
 import { useCourseProgress, useDynamicFontSize } from '../../hooks';
-import { SafeAreaView } from "react-native-safe-area-context";
-import logger from "../../utils/logger";
-import PrimaryButton from "../common/PrimaryButton";
-import BookmarkButton from "./BookmarkButton";
-import LessonCarousel from "./LessonCarousel";
-import MobileSyllabus from "./MobileSyllabus";
-import { useAnalytics } from "../../hooks/useAnalytics";
-import { Course, Lesson, Note } from "../../types/course";
-import { AnalyticsEvent, ScreenName } from "../../utils/trackingEvents";
-import { ErrorBoundary } from "../common/ErrorBoundary";
-import { CourseViewerSkeleton } from "./CourseViewerSkeleton";
+import { useAnalytics } from '../../hooks/useAnalytics';
+import { useInAppReview, useReviewMetrics } from '../../hooks/useInAppReview';
+import { ReviewTrigger } from '../../services/inAppReview';
+import { useReviewStore } from '../../store/reviewStore';
+import { Course, Lesson, Note } from '../../types/course';
+import logger from '../../utils/logger';
+import { AnalyticsEvent, ScreenName } from '../../utils/trackingEvents';
 
 /**
  * Props for the MobileCourseViewer component
@@ -50,6 +54,8 @@ export default function MobileCourseViewer({
 }: MobileCourseViewerProps) {
   const { scale } = useDynamicFontSize();
   const { trackEvent, trackScreen } = useAnalytics();
+  const { requestReview } = useInAppReview();
+  const { trackCourseComplete } = useReviewMetrics();
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode || 'lesson');
   const [currentLessonId, setCurrentLessonId] = useState<string>(
     initialLessonId || course.sections[0]?.lessons[0]?.id || ''
@@ -117,7 +123,7 @@ export default function MobileCourseViewer({
   // Get the quiz for current section (if exists)
   const currentSectionQuiz = useMemo(() => {
     const currentSection = course.sections.find(s => s.id === currentSectionId);
-    return currentSection?.quizzes?.[0] || null; // Get first quiz if multiple exist
+    return currentSection?.quizzes?.[0] || null;
   }, [currentSectionId, course]);
 
   // Resume from last position
@@ -125,7 +131,6 @@ export default function MobileCourseViewer({
     if (progress && currentLessonId) {
       const lessonProgress = progress.lessons[currentLessonId];
       if (lessonProgress?.lastPosition > 0 && !lessonProgress.completed) {
-        // Could scroll to position or seek video here
         logger.info('Resuming from position:', lessonProgress.lastPosition);
       }
     }
@@ -154,9 +159,18 @@ export default function MobileCourseViewer({
           courseTitle: course.title,
           progress: overallProgress,
         });
+
+        // Track and request review
+        trackCourseComplete();
+        const coursesCompleted = useReviewStore.getState().coursesCompleted;
+        if (coursesCompleted === 1) {
+          requestReview(ReviewTrigger.FIRST_COURSE_COMPLETED);
+        } else if (coursesCompleted > 0 && coursesCompleted % 3 === 0) {
+          requestReview(ReviewTrigger.COURSE_MILESTONE);
+        }
       }
     }
-  }, [progress, course.id, course.title, calculateOverallProgress, trackEvent]);
+  }, [progress, course.id, course.title, calculateOverallProgress, trackEvent, trackCourseComplete, requestReview]);
 
   const handleLessonChange = useCallback(
     async (lessonId: string, index: number) => {
@@ -249,18 +263,14 @@ export default function MobileCourseViewer({
     [currentLessonId, deleteNote]
   );
 
-  // Handle "Next" button click on last lesson
   const handleLastLessonNext = useCallback(() => {
     if (isLastLessonInSection && sectionHasQuiz) {
-      // Show quiz prompt modal
       setShowQuizPromptModal(true);
     } else {
-      // No quiz, just go to syllabus
       setViewMode('syllabus');
     }
   }, [isLastLessonInSection, sectionHasQuiz]);
 
-  // Handle "Take Quiz" button - using navigation prop (React Navigation)
   const handleTakeQuiz = useCallback(() => {
     if (!currentSectionQuiz || !navigation) return;
 
@@ -268,11 +278,10 @@ export default function MobileCourseViewer({
     navigation.navigate('Quiz', {
       quiz: currentSectionQuiz,
       courseId: course.id,
-      course: course, // Pass course for navigation back to syllabus
+      course: course,
     });
   }, [currentSectionQuiz, course, navigation]);
 
-  // Handle "Skip" button
   const handleSkipQuiz = useCallback(() => {
     setShowQuizPromptModal(false);
     setViewMode('syllabus');
@@ -386,9 +395,7 @@ export default function MobileCourseViewer({
           onPress={() => setViewMode('lesson')}
           style={[
             styles.tab,
-            {
-              borderBottomColor: viewMode === 'lesson' ? '#20afe7' : 'transparent',
-            },
+            { borderBottomColor: viewMode === 'lesson' ? '#20afe7' : 'transparent' },
           ]}
         >
           <Text
@@ -407,9 +414,7 @@ export default function MobileCourseViewer({
           onPress={() => setViewMode('syllabus')}
           style={[
             styles.tab,
-            {
-              borderBottomColor: viewMode === 'syllabus' ? '#20afe7' : 'transparent',
-            },
+            { borderBottomColor: viewMode === 'syllabus' ? '#20afe7' : 'transparent' },
           ]}
         >
           <Text

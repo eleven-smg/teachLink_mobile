@@ -5,6 +5,7 @@ import batchClient from './api/batchClient';
 import { offlineStorage, SyncOperation, SyncOperationType } from './offlineStorage';
 import syncEntityManager from './sync/syncEntityManager';
 import { useSettingsStore } from '../store/settingsStore';
+import { useDeviceStore } from '../store/deviceStore';
 import logger from '../utils/logger';
 
 import type {
@@ -59,6 +60,19 @@ class SyncService {
       batchSize: 10,
       ...config,
     };
+
+    // Subscribe to battery status changes to adjust sync frequency
+    useDeviceStore.subscribe(
+      (state: any, prevState: any) => {
+        if (state.isLowBattery !== prevState.isLowBattery) {
+          logger.info(`SyncService: Low battery status changed to ${state.isLowBattery}, restarting auto-sync`);
+          if (this.syncIntervalId) {
+            this.stopAutoSync();
+            this.startAutoSync();
+          }
+        }
+      }
+    );
   }
 
   /**
@@ -70,9 +84,12 @@ class SyncService {
       return;
     }
 
+    const isLowBattery = useDeviceStore.getState().isLowBattery;
+    const interval = isLowBattery ? 120000 : this.config.syncInterval; // 2 minutes if low battery
+
     this.syncIntervalId = setInterval(() => {
       this.syncPendingOperations();
-    }, this.config.syncInterval);
+    }, interval);
 
     logger.info('Auto sync started');
     this.emitEvent({ type: 'syncStarted', timestamp: Date.now() });
@@ -107,9 +124,17 @@ class SyncService {
     }
 
     const settings = useSettingsStore.getState();
+    const { isLowBattery } = useDeviceStore.getState();
+
     if (settings.dataSaverEnabled && !isManual) {
       logger.debug('SyncService: Skipped auto-sync — Data Saver mode enabled');
       return;
+    }
+
+    if (isLowBattery && !isManual) {
+      // Additional check: maybe we should even skip altogether in extreme cases,
+      // but "reduce frequency" is the requirement.
+      logger.debug('SyncService: Processing auto-sync in Low Battery mode (reduced frequency)');
     }
 
     // Check network connectivity

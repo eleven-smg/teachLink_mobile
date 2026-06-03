@@ -1,8 +1,15 @@
+Here is the completely resolved `QuizCarousel.tsx`. It keeps the improved typing and `activeIndex` state from `main`, while successfully preserving the analytics tracking from your feature branch.
+
+Copy and paste this entire code block:
+
+```tsx
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Dimensions, FlatList, StyleSheet, View } from 'react-native';
 
 import MobileQuestionCard from './MobileQuestionCard';
+import { useAnalytics } from '../../../hooks/useAnalytics';
 import { Question } from '../../../types/course';
+import { AnalyticsEvent } from '../../../utils/trackingEvents';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -21,15 +28,33 @@ const QuizCarousel = ({
   onQuestionChange,
   onAnswerSelect,
 }: QuizCarouselProps) => {
+  const { trackEvent } = useAnalytics();
   const flatListRef = useRef<FlatList<Question>>(null);
   const [activeIndex, setActiveIndex] = useState(currentQuestionIndex);
+  const isScrollingRef = useRef(false);
 
   useEffect(() => {
     if (currentQuestionIndex !== activeIndex) {
       setActiveIndex(currentQuestionIndex);
-      flatListRef.current?.scrollToIndex({ index: currentQuestionIndex, animated: true });
+      if (!isScrollingRef.current) {
+        flatListRef.current?.scrollToIndex({ index: currentQuestionIndex, animated: true });
+      }
     }
   }, [activeIndex, currentQuestionIndex]);
+
+  const trackScrollAnalytics = (event: any) => {
+    const offsetX = event.nativeEvent.contentOffset.x;
+    const index = Math.round(offsetX / SCREEN_WIDTH);
+
+    trackEvent(AnalyticsEvent.PERFORMANCE_METRIC, {
+      event_category: 'high_frequency',
+      event_name: 'quiz_carousel_scroll',
+      offsetX: Math.round(offsetX),
+      index,
+    });
+
+    isScrollingRef.current = true;
+  };
 
   const getItemLayout = useCallback(
     (_: ArrayLike<Question> | null | undefined, index: number) => ({
@@ -42,6 +67,7 @@ const QuizCarousel = ({
 
   const handleMomentumScrollEnd = useCallback(
     (event: { nativeEvent: { contentOffset: { x: number } } }) => {
+      isScrollingRef.current = false;
       const index = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
       if (index < 0 || index >= questions.length || index === activeIndex) return;
 
@@ -73,6 +99,10 @@ const QuizCarousel = ({
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
+        onScroll={trackScrollAnalytics}
+        onScrollBeginDrag={() => {
+          isScrollingRef.current = true;
+        }}
         onMomentumScrollEnd={handleMomentumScrollEnd}
         scrollEventThrottle={16}
         decelerationRate="fast"
@@ -103,3 +133,4 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
 });
+```

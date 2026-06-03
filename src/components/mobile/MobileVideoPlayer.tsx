@@ -2,27 +2,27 @@ import { Audio, AVPlaybackStatus, AVPlaybackStatusToSet, ResizeMode, Video } fro
 import * as Network from 'expo-network';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Modal,
-  Pressable,
-  StyleProp,
-  StyleSheet,
-  Text,
-  View,
-  ViewStyle,
+    ActivityIndicator,
+    Modal,
+    Pressable,
+    StyleProp,
+    StyleSheet,
+    Text,
+    View,
+    ViewStyle,
 } from 'react-native';
 
 import VideoControls from './VideoControls';
 import { usePictureInPicture, useVideoGestures } from '../../hooks';
 import {
-  AUTO_QUALITY_ID,
-  deriveNetworkType,
-  getQualityOptions,
-  normalizeSources,
-  selectSourceById,
-  type NetworkType,
-  type NormalizedVideoSource,
-  type VideoSource,
+    AUTO_QUALITY_ID,
+    deriveNetworkType,
+    getQualityOptions,
+    normalizeSources,
+    selectSourceById,
+    type NetworkType,
+    type NormalizedVideoSource,
+    type VideoSource,
 } from '../../services/videoQuality';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 
@@ -77,7 +77,7 @@ const MobileVideoPlayer = ({
   const videoRef = useRef<Video | null>(null);
   const autoPlayHandledRef = useRef(false);
   const lastToggleRef = useRef(0);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | (() => void) | null>(null);
   const resumeStatusRef = useRef<AVPlaybackStatusToSet | null>(null);
 
   const [networkType, setNetworkType] = useState<NetworkType>('unknown');
@@ -119,9 +119,13 @@ const MobileVideoPlayer = ({
       return;
     }
     if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
+      if (typeof hideTimerRef.current === 'function') {
+        hideTimerRef.current();
+      } else {
+        clearTimeout(hideTimerRef.current);
+      }
     }
-    hideTimerRef.current = setTimeout(() => {
+    hideTimerRef.current = scheduleAnimationFrame(() => {
       setControlsVisible(false);
     }, AUTO_HIDE_MS);
   }, []);
@@ -308,7 +312,11 @@ const MobileVideoPlayer = ({
     }
     return () => {
       if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
+        if (typeof hideTimerRef.current === 'function') {
+          hideTimerRef.current();
+        } else {
+          clearTimeout(hideTimerRef.current);
+        }
       }
     };
   }, [controlsVisibleEffective, error, isPlaying, isScrubbing, scheduleAutoHide]);

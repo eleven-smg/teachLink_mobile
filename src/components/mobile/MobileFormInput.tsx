@@ -1,7 +1,17 @@
-import { Eye, EyeOff, AlertCircle } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, TextInput, TextInputProps, TouchableOpacity } from 'react-native';
-
+import {
+  View,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  KeyboardTypeOptions,
+  ReturnKeyTypeOptions,
+  AutoCapitalize,
+  NativeSyntheticEvent,
+  TextInputSubmitEditingEventData,
+  TextInputProps,
+} from 'react-native';
+import { Eye, EyeOff, AlertCircle } from 'lucide-react-native';
 import { useDynamicFontSize } from '../../hooks';
 import {
   formCacheService,
@@ -10,32 +20,32 @@ import {
 } from '../../services/formCache';
 import { AppText as Text } from '../common/AppText';
 
-/**
- * Props for the MobileFormInput component
- */
-interface MobileFormInputProps extends TextInputProps {
-  /** Label text for the input field */
+interface MobileFormInputProps {
   label: string;
-  /** Current value of the input */
   value: string;
-  /** Callback when the input value changes */
   onChangeText: (text: string) => void;
-  /** Error message to display */
+  placeholder?: string;
   error?: string;
-  /** Hint text to display next to the label */
   hint?: string;
-  /** Icon to display on the left side of the input */
   leftIcon?: React.ReactNode;
-  /** Whether the field is required */
   required?: boolean;
-  /** Whether to use dark mode styling */
   isDark?: boolean;
-  /** Shared cache key for autofill and suggestions */
+  secureTextEntry?: boolean;
+  multiline?: boolean;
+  keyboardType?: KeyboardTypeOptions;
+  autoCapitalize?: AutoCapitalize;
+  autoCorrect?: boolean;
+  autoComplete?: React.ComponentProps<typeof TextInput>['autoComplete'];
+  returnKeyType?: ReturnKeyTypeOptions;
+  onSubmitEditing?: (event: NativeSyntheticEvent<TextInputSubmitEditingEventData>) => void;
+  maxLength?: number;
+  editable?: boolean;
+  testID?: string;
+  accessibilityLabel?: string;
   cacheKey?: FormCacheFieldKey;
-  /** Persist value to cache on blur (default: true when cacheKey is set) */
   cacheOnBlur?: boolean;
-  /** Optional ref for focusing the underlying input from parent screens */
   inputRef?: React.Ref<TextInput>;
+  onBlur?: TextInputProps['onBlur'];
 }
 
 export const MobileFormInput: React.FC<MobileFormInputProps> = ({
@@ -48,14 +58,22 @@ export const MobileFormInput: React.FC<MobileFormInputProps> = ({
   leftIcon,
   required = false,
   isDark = false,
-  cacheKey,
-  cacheOnBlur = true,
-  inputRef,
   secureTextEntry,
   multiline = false,
   keyboardType = 'default',
+  autoCapitalize,
+  autoCorrect,
+  autoComplete,
+  returnKeyType,
+  onSubmitEditing,
+  maxLength,
+  editable,
+  testID,
+  accessibilityLabel,
+  cacheKey,
+  cacheOnBlur = true,
+  inputRef,
   onBlur,
-  ...rest
 }) => {
   const [isFocused, setIsFocused] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -101,7 +119,6 @@ export const MobileFormInput: React.FC<MobileFormInputProps> = ({
   const handleTogglePassword = useCallback(() => setShowPassword(prev => !prev), []);
 
   const borderColor = error ? '#ef4444' : isFocused ? '#19c3e6' : isDark ? '#334155' : '#e2e8f0';
-
   const labelColor = error ? '#ef4444' : isDark ? '#94a3b8' : '#64748b';
 
   return (
@@ -155,7 +172,15 @@ export const MobileFormInput: React.FC<MobileFormInputProps> = ({
           secureTextEntry={isPassword && !showPassword}
           multiline={multiline}
           keyboardType={keyboardType}
-          {...rest}
+          autoCapitalize={autoCapitalize}
+          autoCorrect={autoCorrect}
+          autoComplete={autoComplete}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          maxLength={maxLength}
+          editable={editable}
+          testID={testID}
+          accessibilityLabel={accessibilityLabel}
         />
 
         {isPassword && (
@@ -207,4 +232,3 @@ export const MobileFormInput: React.FC<MobileFormInputProps> = ({
     </View>
   );
 };
-

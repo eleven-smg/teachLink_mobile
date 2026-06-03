@@ -1,11 +1,11 @@
-import * as Haptics from 'expo-haptics';
+import { ImpactFeedbackStyle, impactAsync } from 'expo-haptics';
 
 type HapticType = 'light' | 'medium' | 'heavy';
 
 const impactMap = {
-  light: Haptics.ImpactFeedbackStyle.Light,
-  medium: Haptics.ImpactFeedbackStyle.Medium,
-  heavy: Haptics.ImpactFeedbackStyle.Heavy,
+  light: ImpactFeedbackStyle.Light,
+  medium: ImpactFeedbackStyle.Medium,
+  heavy: ImpactFeedbackStyle.Heavy,
 };
 
 const intensityWeights = {
@@ -20,7 +20,7 @@ const BATCH_WINDOW_MS = 50;
 
 const flushHaptics = () => {
   if (pendingHaptic) {
-    Haptics.impactAsync(impactMap[pendingHaptic]).catch(() => {
+    impactAsync(impactMap[pendingHaptic]).catch(() => {
       // Ignore haptic failures silently
     });
     pendingHaptic = null;

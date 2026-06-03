@@ -8,6 +8,7 @@ export * from './HealthDashboard';
 export * from './HomeScreenSkeleton';
 export * from './InfiniteVirtualList';
 export * from './MobileFormInput';
+export * from './MobileHeader';
 export * from './MobileProfile';
 export * from './MobileSearch';
 export * from './MobileSettings';

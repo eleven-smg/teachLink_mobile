@@ -59,7 +59,13 @@ interface SettingsState {
   resetSettings: () => void;
 }
 
-const DEFAULT_SETTINGS: Omit<SettingsState, keyof Omit<SettingsState, ProfileVisibility | DownloadQuality | StorageLimit | AppLanguage | FontSize | boolean>> = {
+const DEFAULT_SETTINGS: Omit<
+  SettingsState,
+  keyof Omit<
+    SettingsState,
+    ProfileVisibility | DownloadQuality | StorageLimit | AppLanguage | FontSize | boolean
+  >
+> = {
   profileVisibility: 'public' as ProfileVisibility,
   twoFactorEnabled: false,
   dataSharing: true,
@@ -129,7 +135,7 @@ export const useSettingsStore = create<SettingsState>()(
       name: 'settings-storage',
       version: 1,
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
+      partialize: state => ({
         profileVisibility: state.profileVisibility,
         twoFactorEnabled: state.twoFactorEnabled,
         dataSharing: state.dataSharing,
@@ -146,7 +152,7 @@ export const useSettingsStore = create<SettingsState>()(
         adaptiveThemeEnabled: state.adaptiveThemeEnabled,
         dataSaverEnabled: state.dataSaverEnabled,
       }),
-      migrate: (persistedState) => (persistedState ?? {}) as Partial<SettingsState>,
+      migrate: persistedState => (persistedState ?? {}) as Partial<SettingsState>,
     }
   )
 );

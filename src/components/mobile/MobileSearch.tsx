@@ -1,13 +1,12 @@
 import { AlertCircle, Search, SlidersHorizontal } from 'lucide-react-native';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  View,
+    FlatList,
+    Platform,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 
 import { sampleCourse } from '../../data/sampleCourse';
@@ -247,7 +246,7 @@ export const MobileSearch = ({
   const showResults = hasSearched;
 
   return (
-    <KeyboardAvoidingView
+    <DelegatedKeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
@@ -329,6 +328,7 @@ export const MobileSearch = ({
             renderItem={({ item }: { item: SearchResultItem }) => (
               <SearchResultCard item={item} onPress={() => onResultPress?.(item)} />
             )}
+            removeClippedSubviews
             contentContainerStyle={styles.resultsList}
             ListEmptyComponent={
               <Text style={styles.emptyText}>Try a different query or adjust filters.</Text>
@@ -345,7 +345,7 @@ export const MobileSearch = ({
         onApply={handleApplyFilters}
         onReset={() => setFilterValues({})}
       />
-    </KeyboardAvoidingView>
+    </DelegatedKeyboardAvoidingView>
   );
 };
 

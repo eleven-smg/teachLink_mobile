@@ -4,6 +4,7 @@ import { createJSONStorage, devtools, persist, subscribeWithSelector } from 'zus
 
 import type { StateStorage } from 'zustand/middleware';
 import { toUnixMs } from './persistence';
+import { sentryContextService } from '../services/sentryContext';
 
 export interface User {
   id: string;
@@ -66,7 +67,22 @@ export const useAppStore = create<AppState>()(
         sessionExpiringSoon: false,
         isLoading: false,
         error: null,
-        setUser: user => set({ user, isAuthenticated: !!user }, false, 'setUser'),
+        setUser: (user) => {
+          set({ user, isAuthenticated: !!user }, false, 'setUser');
+          // Sync Sentry scope with the signed-in user so every subsequent
+          // error report is automatically tagged with user identity.
+          if (user) {
+            sentryContextService.setUser({
+              id: user.id,
+              email: user.email,
+              username: user.name,
+              role: user.role,
+            });
+          } else {
+            sentryContextService.clearUser();
+          }
+        },
+        setTheme: (theme) => set({ theme }, false, 'setTheme'),
         setTokens: (accessToken, refreshToken, sessionExpiresAt) =>
           set(
             {
@@ -77,11 +93,11 @@ export const useAppStore = create<AppState>()(
             false,
             'setTokens'
           ),
-        setSessionExpiringSoon: (sessionExpiringSoon) =>
+        setSessionExpiringSoon: sessionExpiringSoon =>
           set({ sessionExpiringSoon }, false, 'setSessionExpiringSoon'),
-        setAuthLoading: isAuthLoading => set({ isAuthLoading }, false, 'setAuthLoading'),
-        setAuthError: authError => set({ authError }, false, 'setAuthError'),
-        logout: () =>
+        setAuthLoading: (isAuthLoading) => set({ isAuthLoading }, false, 'setAuthLoading'),
+        setAuthError: (authError) => set({ authError }, false, 'setAuthError'),
+        logout: () => {
           set(
             {
               user: null,
@@ -95,9 +111,13 @@ export const useAppStore = create<AppState>()(
             },
             false,
             'logout'
-          ),
-        setLoading: isLoading => set({ isLoading }, false, 'setLoading'),
-        setError: error => set({ error }, false, 'setError'),
+          );
+          // Clear Sentry user scope and reset breadcrumb trail on logout
+          sentryContextService.clearUser();
+          sentryContextService.resetSession();
+        },
+        setLoading: (isLoading) => set({ isLoading }, false, 'setLoading'),
+        setError: (error) => set({ error }, false, 'setError'),
       })),
       {
         name: 'app-auth-storage',
@@ -132,4 +152,5 @@ export const useAppStore = create<AppState>()(
 
 export * from './notificationStore';
 export * from './courseProgressStore';
+export * from './reviewStore';
 export * from './selectors';

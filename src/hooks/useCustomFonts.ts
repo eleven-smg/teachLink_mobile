@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import * as Font from 'expo-font';
+import { loadAsync } from 'expo-font';
 import { Asset } from 'expo-asset';
 import { Platform } from 'react-native';
 
@@ -83,7 +83,7 @@ async function loadSingleFont(config: FontConfig): Promise<boolean> {
     return fontCache.loading.get(config.name)!;
   }
 
-  const loadPromise = Font.loadAsync({
+  const loadPromise = loadAsync({
     [config.name]: config.source,
   })
     .then(() => {

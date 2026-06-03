@@ -1,7 +1,22 @@
+Here is the complete resolved file for `achievementStore.ts`. I kept the cleaner, syntax-error-free implicit return from the `main` branch. 
+
+Copy and paste this exact code:
+
+```typescript
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 import { asyncStorageJSONStorage, isRecord, unwrapPersistedState } from './persistence';
+import { useReviewStore } from './reviewStore';
+import { inAppReviewService, ReviewTrigger } from '../services/inAppReview';
+
+const triggerAchievementReview = () => {
+  const { incrementAchievementsUnlocked, getMetrics, recordReviewRequest } = useReviewStore.getState();
+  incrementAchievementsUnlocked();
+  inAppReviewService.requestReview(ReviewTrigger.ACHIEVEMENT_UNLOCKED, getMetrics()).then((result) => {
+    recordReviewRequest(ReviewTrigger.ACHIEVEMENT_UNLOCKED, result.shown, result.reason);
+  });
+};
 
 /**
  * Rarity levels for achievement badges
@@ -53,8 +68,6 @@ interface AchievementState {
   achievementProgress: Record<string, AchievementProgress>;
   /** Number of unlocked achievements */
   unlockedCount: number;
-  /** Whether achievements have been loaded */
-  isLoaded: boolean;
 
   // Actions
   /** Load achievements — initializes with defaults if not yet persisted */
@@ -155,11 +168,13 @@ export const DEFAULT_ACHIEVEMENTS: Achievement[] = [
 ];
 
 const DEFAULT_ACHIEVEMENT_BY_ID = Object.fromEntries(
-  DEFAULT_ACHIEVEMENTS.map((achievement) => [achievement.id, achievement]),
+  DEFAULT_ACHIEVEMENTS.map(achievement => [achievement.id, achievement])
 ) as Record<string, Achievement>;
 
-function buildAchievementsFromProgress(progressById: Record<string, AchievementProgress>): Achievement[] {
-  return DEFAULT_ACHIEVEMENTS.map((achievement) => {
+function buildAchievementsFromProgress(
+  progressById: Record<string, AchievementProgress>
+): Achievement[] {
+  return DEFAULT_ACHIEVEMENTS.map(achievement => {
     const progress = progressById[achievement.id];
     if (!progress) {
       return achievement;
@@ -174,7 +189,9 @@ function buildAchievementsFromProgress(progressById: Record<string, AchievementP
   });
 }
 
-function snapshotAchievementProgress(achievements: Achievement[]): Record<string, AchievementProgress> {
+function snapshotAchievementProgress(
+  achievements: Achievement[]
+): Record<string, AchievementProgress> {
   return achievements.reduce<Record<string, AchievementProgress>>((snapshot, achievement) => {
     const defaultAchievement = DEFAULT_ACHIEVEMENT_BY_ID[achievement.id];
     if (!defaultAchievement) {
@@ -199,7 +216,7 @@ function snapshotAchievementProgress(achievements: Achievement[]): Record<string
     const currentProgress = achievement.progress;
     const defaultProgress = defaultAchievement.progress;
     const progressChanged =
-      (!!currentProgress !== !!defaultProgress) ||
+      !!currentProgress !== !!defaultProgress ||
       (currentProgress !== undefined &&
         defaultProgress !== undefined &&
         (currentProgress.current !== defaultProgress.current ||
@@ -222,35 +239,38 @@ function parseAchievementProgressMap(value: unknown): Record<string, Achievement
     return {};
   }
 
-  return Object.entries(value).reduce<Record<string, AchievementProgress>>((snapshot, [id, entry]) => {
-    if (!isRecord(entry)) {
-      return snapshot;
-    }
-
-    const progress: AchievementProgress = {};
-
-    if (typeof entry.isLocked === 'boolean') {
-      progress.isLocked = entry.isLocked;
-    }
-
-    if (typeof entry.unlockedAt === 'string') {
-      progress.unlockedAt = entry.unlockedAt;
-    }
-
-    if (isRecord(entry.progress)) {
-      const current = entry.progress.current;
-      const total = entry.progress.total;
-      if (typeof current === 'number' && typeof total === 'number') {
-        progress.progress = { current, total };
+  return Object.entries(value).reduce<Record<string, AchievementProgress>>(
+    (snapshot, [id, entry]) => {
+      if (!isRecord(entry)) {
+        return snapshot;
       }
-    }
 
-    if (Object.keys(progress).length > 0) {
-      snapshot[id] = progress;
-    }
+      const progress: AchievementProgress = {};
 
-    return snapshot;
-  }, {});
+      if (typeof entry.isLocked === 'boolean') {
+        progress.isLocked = entry.isLocked;
+      }
+
+      if (typeof entry.unlockedAt === 'string') {
+        progress.unlockedAt = entry.unlockedAt;
+      }
+
+      if (isRecord(entry.progress)) {
+        const current = entry.progress.current;
+        const total = entry.progress.total;
+        if (typeof current === 'number' && typeof total === 'number') {
+          progress.progress = { current, total };
+        }
+      }
+
+      if (Object.keys(progress).length > 0) {
+        snapshot[id] = progress;
+      }
+
+      return snapshot;
+    },
+    {}
+  );
 }
 
 function normalizeAchievementState(rawState: unknown): {
@@ -269,7 +289,7 @@ function normalizeAchievementState(rawState: unknown): {
   const unlockedCount =
     typeof persistedState.unlockedCount === 'number'
       ? persistedState.unlockedCount
-      : achievements.filter((achievement) => !achievement.isLocked).length;
+      : achievements.filter(achievement => !achievement.isLocked).length;
 
   return {
     achievements,
@@ -297,11 +317,11 @@ export const useAchievementStore = create<AchievementState>()(
       },
 
       unlockAchievement: (id: string) =>
-        set((state) => {
-          const achievement = state.achievements.find((a) => a.id === id);
+        set(state => {
+          const achievement = state.achievements.find(a => a.id === id);
           if (!achievement || !achievement.isLocked) return state;
 
-          const updatedAchievements = state.achievements.map((a) =>
+          const updatedAchievements = state.achievements.map(a =>
             a.id === id
               ? {
                   ...a,
@@ -314,25 +334,28 @@ export const useAchievementStore = create<AchievementState>()(
               : a
           );
 
+          setTimeout(triggerAchievementReview, 500);
+
           return {
             achievements: updatedAchievements,
             achievementProgress: snapshotAchievementProgress(updatedAchievements),
-            unlockedCount: updatedAchievements.filter((a) => !a.isLocked).length,
+            unlockedCount: updatedAchievements.filter(a => !a.isLocked).length,
           };
         }),
 
       updateProgress: (id: string, current: number) =>
-        set((state) => {
-          const achievement = state.achievements.find((a) => a.id === id);
+        set(state => {
+          const achievement = state.achievements.find(a => a.id === id);
           if (!achievement || !achievement.isLocked) return state;
 
-          const updatedAchievements = state.achievements.map((a) => {
+          const updatedAchievements = state.achievements.map(a => {
             if (a.id !== id) return a;
 
             const progress = a.progress ? { ...a.progress, current } : { current, total: 1 };
-            
+
             // Auto-unlock if progress is complete
             if (progress.current >= progress.total) {
+              setTimeout(triggerAchievementReview, 500);
               return {
                 ...a,
                 isLocked: false,
@@ -350,17 +373,17 @@ export const useAchievementStore = create<AchievementState>()(
           return {
             achievements: updatedAchievements,
             achievementProgress: snapshotAchievementProgress(updatedAchievements),
-            unlockedCount: updatedAchievements.filter((a) => !a.isLocked).length,
+            unlockedCount: updatedAchievements.filter(a => !a.isLocked).length,
           };
         }),
 
       isAchievementUnlocked: (id: string) => {
-        const achievement = get().achievements.find((a) => a.id === id);
+        const achievement = get().achievements.find(a => a.id === id);
         return achievement ? !achievement.isLocked : false;
       },
 
       getUnlockedAchievements: () => {
-        return get().achievements.filter((a) => !a.isLocked);
+        return get().achievements.filter(a => !a.isLocked);
       },
 
       resetAchievements: () =>
@@ -374,19 +397,19 @@ export const useAchievementStore = create<AchievementState>()(
         set({
           achievements,
           achievementProgress: snapshotAchievementProgress(achievements),
-          unlockedCount: achievements.filter((a) => !a.isLocked).length,
+          unlockedCount: achievements.filter(a => !a.isLocked).length,
         }),
     }),
     {
       name: 'achievement-storage',
       version: 1,
       storage: asyncStorageJSONStorage,
-      partialize: (state) => ({
+      partialize: state => ({
         achievementProgress: state.achievementProgress,
         unlockedCount: state.unlockedCount,
         isLoaded: state.isLoaded,
       }),
-      migrate: (persistedState) => normalizeAchievementState(persistedState),
+      migrate: persistedState => normalizeAchievementState(persistedState),
       merge: (persistedState, currentState) => {
         const normalizedState = normalizeAchievementState(persistedState);
         return {
@@ -394,6 +417,7 @@ export const useAchievementStore = create<AchievementState>()(
           ...normalizedState,
         };
       },
-    },
+    }
   )
 );
+```
