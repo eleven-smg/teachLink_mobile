@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import {
   Alert,
   ActivityIndicator,
@@ -66,7 +66,7 @@ interface SettingRowProps {
   destructive?: boolean;
 }
 
-function SettingRow({
+const SettingRow = memo(function SettingRow({
   icon,
   iconBg = 'bg-gray-100 dark:bg-gray-700',
   label,
@@ -103,7 +103,7 @@ function SettingRow({
       {right ?? (onPress ? <ChevronDown size={scale(16)} color="#9CA3AF" /> : null)}
     </Row>
   );
-}
+});
 
 // ─────────────────────────────────────────────────────────────
 // Options

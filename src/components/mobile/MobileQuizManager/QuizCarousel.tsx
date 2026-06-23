@@ -51,6 +51,21 @@ const QuizCarousel = ({
     [activeIndex, onQuestionChange, questions.length]
   );
 
+  const renderItem = useCallback(
+    ({ item, index }: { item: Question; index: number }) => (
+      <View style={styles.cardContainer}>
+        <MobileQuestionCard
+          question={item}
+          questionNumber={index + 1}
+          totalQuestions={questions.length}
+          selectedAnswer={selectedAnswers[item.id]}
+          onAnswerSelect={onAnswerSelect}
+        />
+      </View>
+    ),
+    [questions.length, selectedAnswers, onAnswerSelect]
+  );
+
   if (questions.length === 0) return null;
 
   return (
@@ -58,17 +73,7 @@ const QuizCarousel = ({
       <FlatList
         ref={flatListRef}
         data={questions}
-        renderItem={({ item, index }) => (
-          <View style={styles.cardContainer}>
-            <MobileQuestionCard
-              question={item}
-              questionNumber={index + 1}
-              totalQuestions={questions.length}
-              selectedAnswer={selectedAnswers[item.id]}
-              onAnswerSelect={onAnswerSelect}
-            />
-          </View>
-        )}
+        renderItem={renderItem}
         keyExtractor={item => item.id}
         horizontal
         pagingEnabled

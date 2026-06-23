@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import {
   TouchableOpacity,
   Text,
@@ -37,7 +37,7 @@ interface PrimaryButtonProps {
   accessibilityLabel?: string;
 }
 
-export default function PrimaryButton({
+function PrimaryButton({
   onPress,
   title,
   loading = false,
@@ -208,6 +208,8 @@ export default function PrimaryButton({
     </TouchableOpacity>
   );
 }
+
+export default memo(PrimaryButton);
 
 const styles = StyleSheet.create({
   button: {

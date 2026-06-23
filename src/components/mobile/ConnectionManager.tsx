@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import {
   View,
   Text,
@@ -28,7 +28,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 }) => {
   useMemoryMonitor({ componentId: 'ConnectionManager', itemCount: connections.length });
 
-  const renderConnectionItem = ({ item }: ListRenderItemInfo<Connection>) => (
+  const renderConnectionItem = useCallback(
+    ({ item }: ListRenderItemInfo<Connection>) => (
     <View style={styles.connectionItem}>
       <View style={styles.connectionInfo}>
         {/* Placeholder for Avatar */}
@@ -46,7 +47,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         </TouchableOpacity>
       )}
     </View>
-  );
+  ), [onRemoveConnection]);
 
   return (
     <View style={styles.container}>

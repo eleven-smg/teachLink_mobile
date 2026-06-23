@@ -1,5 +1,5 @@
 import { Image as ExpoImage, ImageProps as ExpoImageProps } from 'expo-image';
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { ImageCache } from '../../utils/imageCache';
 import logger from '../../utils/logger';
@@ -49,7 +49,7 @@ interface CachedImageProps extends Omit<ExpoImageProps, 'source'> {
  * />
  * ```
  */
-export const CachedImage: React.FC<CachedImageProps> = ({
+const CachedImageComponent: React.FC<CachedImageProps> = ({
   uri,
   alt,
   showLoadingIndicator = true,
@@ -155,4 +155,5 @@ const styles = StyleSheet.create({
   },
 });
 
+export const CachedImage = memo(CachedImageComponent);
 export default CachedImage;
