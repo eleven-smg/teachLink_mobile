@@ -299,6 +299,12 @@ jest.mock('expo-notifications', () => ({
 
 // Mock expo-battery
 jest.mock('expo-battery', () => ({
+  BatteryState: {
+    UNKNOWN: 0,
+    UNPLUGGED: 1,
+    CHARGING: 2,
+    FULL: 3,
+  },
   useLowPowerMode: jest.fn(() => false),
   isLowPowerModeEnabledAsync: jest.fn(() => Promise.resolve(false)),
   getBatteryLevelAsync: jest.fn(() => Promise.resolve(1)),

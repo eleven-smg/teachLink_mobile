@@ -1,4 +1,6 @@
 import { Image as ExpoImage, ImageProps as ExpoImageProps } from 'expo-image';
+import React, { memo, useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -112,7 +114,7 @@ function resolveStyleDimension(
  * />
  * ```
  */
-export const CachedImage: React.FC<CachedImageProps> = ({
+const CachedImageComponent: React.FC<CachedImageProps> = ({
   uri,
   alt,
   showLoadingIndicator = true,
@@ -286,4 +288,5 @@ const styles = StyleSheet.create({
   },
 });
 
+export const CachedImage = memo(CachedImageComponent);
 export default CachedImage;

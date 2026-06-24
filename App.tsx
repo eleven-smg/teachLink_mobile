@@ -1,30 +1,31 @@
+import * as Font from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef } from 'react';
 import { Alert, AppState, AppStateStatus, LogBox } from 'react-native';
 
 import StorybookUI from './.rnstorybook';
 import './global.css';
-
-import * as Font from 'expo-font';
-import * as SplashScreen from 'expo-splash-screen';
 import { ErrorBoundary } from './src/components/common/ErrorBoundary';
 import { initializeLogging } from './src/config/logging';
 import { AuthProvider, useAdaptiveTheme, useReviewMetrics } from './src/hooks';
 import AppNavigator from './src/navigation/AppNavigator';
 import { setupNotificationNavigation } from './src/navigation/linking';
 import { apiClient } from './src/services/api';
+import { warmCriticalCaches } from './src/services/cacheWarming';
 import { crashReportingService } from './src/services/cashReporting';
 import { featureCapabilities } from './src/services/featureCapabilities';
 import { inAppReviewService } from './src/services/inAppReview';
 import { mobileAuthService } from './src/services/mobileAuth';
 import {
-    addNotificationReceivedListener,
-    getLastNotificationResponse,
-    removeNotificationListener,
-    registerForPushNotifications, // Added missing native push helpers
-    registerTokenWithBackend,
+  addNotificationReceivedListener,
+  getLastNotificationResponse,
+  removeNotificationListener,
+  registerForPushNotifications, // Added missing native push helpers
+  registerTokenWithBackend,
 } from './src/services/pushNotifications';
 import { requestQueue } from './src/services/requestQueue';
+import { initializeSecureStorage } from './src/services/secureStorage'; // Added missing storage helper mock path
 import socketService from './src/services/socket';
 import { syncService } from './src/services/syncService'; // Fixed naming convention from the merge conflict
 import { useAppStore, useNotificationStore } from './src/store'; // Added missing store imports
@@ -33,7 +34,6 @@ import { handleCacheVersionUpdate } from './src/utils/cacheVersioning';
 import { requireEnvVariables } from './src/utils/env';
 import { appLogger } from './src/utils/logger';
 import { handleNotificationReceived } from './src/utils/notificationHandlers';
-import { initializeSecureStorage } from './src/services/secureStorage'; // Added missing storage helper mock path
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -61,10 +61,10 @@ if (__DEV__) {
 }
 
 const App = () => {
-  const theme = useAppStore((state) => state.theme);
+  const theme = useAppStore(state => state.theme);
   useAdaptiveTheme();
   // Using imported hook from the merge logic if needed downstream
-  useReviewMetrics(); 
+  useReviewMetrics();
 
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [appIsReady, setAppIsReady] = React.useState(false);
@@ -81,8 +81,8 @@ const App = () => {
         const appVersion = require('./package.json').version as string;
         await handleCacheVersionUpdate(appVersion);
 
-        // 3. Initial data fetch (simulate or add real fetch)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // 3. Warm critical API caches before first render.
+        await warmCriticalCaches();
       } catch (e) {
         console.warn('Error during app initialization:', e);
       } finally {
@@ -101,7 +101,7 @@ const App = () => {
     crashReportingService.init();
 
     // Initialize secure storage (Keychain/Keystore) for encrypted token storage
-    initializeSecureStorage().catch((error) => {
+    initializeSecureStorage().catch(error => {
       appLogger.errorSync('Failed to initialize secure storage:', error); // Fixed 'logger.error' to 'appLogger.errorSync'
     });
 
@@ -122,7 +122,8 @@ const App = () => {
     socketService.connect();
 
     // Initialize feature capability detection (non-blocking)
-    featureCapabilities.checkAllCapabilities()
+    featureCapabilities
+      .checkAllCapabilities()
       .then(capabilities => {
         const degradationStore = useDegradationStore.getState();
         appLogger.infoSync('[App] Feature capabilities checked', {
@@ -138,11 +139,14 @@ const App = () => {
         });
       })
       .catch(error => {
-        appLogger.errorSync('[App] Error checking feature capabilities', error instanceof Error ? error : new Error(String(error)));
+        appLogger.errorSync(
+          '[App] Error checking feature capabilities',
+          error instanceof Error ? error : new Error(String(error))
+        );
       });
 
     // Initialize push notifications: request permissions and get device token
-    registerForPushNotifications().then(async (token) => {
+    registerForPushNotifications().then(async token => {
       if (token) {
         const { setPushToken, setTokenRegistered } = useNotificationStore.getState();
         setPushToken(token);
