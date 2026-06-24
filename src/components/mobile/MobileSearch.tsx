@@ -1,26 +1,21 @@
 import { AlertCircle, Search, SlidersHorizontal } from 'lucide-react-native';
 import React, { useCallback, useMemo, useState } from 'react';
-import {
-    FlatList,
-    Platform,
-    StyleSheet,
-    TextInput,
-    TouchableOpacity,
-    View,
-} from 'react-native';
+import { FlatList, Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { FilterField, FilterSheet, FilterValues } from './FilterSheet';
+import { SearchHistory } from './SearchHistory';
+import { SearchResultCard, SearchResultItem } from './SearchResultCard';
+import { VoiceSearch } from './VoiceSearch';
 import { sampleCourse } from '../../data/sampleCourse';
 import { useAnalytics, useDebounce, useDynamicFontSize, useMemoryMonitor } from '../../hooks';
+import { usePrefetchImages } from '../../hooks/usePrefetchImages';
 import { Course } from '../../types/course';
 import { addToSearchHistory } from '../../utils/searchHistory';
 import { AnalyticsEvent } from '../../utils/trackingEvents';
 import { buildTrie, Trie } from '../../utils/trie';
 import { validateSearchQuery } from '../../utils/validation';
 import { AppText as Text } from '../common/AppText';
-import { FilterField, FilterSheet, FilterValues } from './FilterSheet';
-import { SearchHistory } from './SearchHistory';
-import { SearchResultCard, SearchResultItem } from './SearchResultCard';
-import { VoiceSearch } from './VoiceSearch';
+import { DelegatedKeyboardAvoidingView } from '../common/DelegatedKeyboardAvoidingView';
 
 const DEFAULT_FILTERS: FilterField[] = [
   {
@@ -95,6 +90,7 @@ function courseToSearchResult(course: Course): SearchResultItem {
     category: course.category,
     level: course.level,
     duration: course.totalDuration,
+    thumbnail: course.thumbnail,
   };
 }
 
@@ -148,7 +144,7 @@ export const MobileSearch = ({
   const [filterValues, setFilterValues] = useState<FilterValues>({});
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
+  const [, setIsSearching] = useState(false);
   const searchAbortRef = React.useRef<AbortController | null>(null);
   const fontSizeScale = useDynamicFontSize() as { scale?: (value: number) => number };
   const scale =
@@ -156,6 +152,10 @@ export const MobileSearch = ({
   const { trackEvent } = useAnalytics();
 
   useMemoryMonitor({ componentId: 'MobileSearch', itemCount: results.length });
+
+  // Prefetch thumbnails for visible search results during idle time
+  const resultThumbnails = useMemo(() => results.map(r => r.thumbnail ?? null), [results]);
+  usePrefetchImages(resultThumbnails, { auto: true, limit: 10 });
 
   const debouncedQuery = useDebounce(query, 300);
 
