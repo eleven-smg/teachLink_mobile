@@ -1,26 +1,21 @@
 import { AlertCircle, Search, SlidersHorizontal } from 'lucide-react-native';
 import React, { useCallback, useMemo, useState } from 'react';
-import {
-    FlatList,
-    Platform,
-    StyleSheet,
-    TextInput,
-    TouchableOpacity,
-    View,
-} from 'react-native';
+import { FlatList, Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { FilterField, FilterSheet, FilterValues } from './FilterSheet';
+import { SearchHistory } from './SearchHistory';
+import { SearchResultCard, SearchResultItem } from './SearchResultCard';
+import { VoiceSearch } from './VoiceSearch';
 import { sampleCourse } from '../../data/sampleCourse';
 import { useAnalytics, useDebounce, useDynamicFontSize, useMemoryMonitor } from '../../hooks';
+import { usePrefetchImages } from '../../hooks/usePrefetchImages';
 import { Course } from '../../types/course';
 import { addToSearchHistory } from '../../utils/searchHistory';
 import { AnalyticsEvent } from '../../utils/trackingEvents';
 import { buildTrie, Trie } from '../../utils/trie';
 import { validateSearchQuery } from '../../utils/validation';
 import { AppText as Text } from '../common/AppText';
-import { FilterField, FilterSheet, FilterValues } from './FilterSheet';
-import { SearchHistory } from './SearchHistory';
-import { SearchResultCard, SearchResultItem } from './SearchResultCard';
-import { VoiceSearch } from './VoiceSearch';
+import { DelegatedKeyboardAvoidingView } from '../common/DelegatedKeyboardAvoidingView';
 
 const DEFAULT_FILTERS: FilterField[] = [
   {
@@ -95,6 +90,7 @@ function courseToSearchResult(course: Course): SearchResultItem {
     category: course.category,
     level: course.level,
     duration: course.totalDuration,
+    thumbnail: course.thumbnail,
   };
 }
 
@@ -122,6 +118,21 @@ export interface MobileSearchProps {
   placeholder?: string;
 }
 
+const SuggestionItem = memo(function SuggestionItem({
+  suggestion,
+  onPress,
+}: {
+  suggestion: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.suggestItem} onPress={onPress}>
+      <Search size={16} color="#9CA3AF" />
+      <Text style={styles.suggestText}>{suggestion}</Text>
+    </TouchableOpacity>
+  );
+});
+
 export const MobileSearch = ({
   onResultPress,
   placeholder = 'Search courses...',
@@ -133,7 +144,7 @@ export const MobileSearch = ({
   const [filterValues, setFilterValues] = useState<FilterValues>({});
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
+  const [, setIsSearching] = useState(false);
   const searchAbortRef = React.useRef<AbortController | null>(null);
   const fontSizeScale = useDynamicFontSize() as { scale?: (value: number) => number };
   const scale =
@@ -141,6 +152,10 @@ export const MobileSearch = ({
   const { trackEvent } = useAnalytics();
 
   useMemoryMonitor({ componentId: 'MobileSearch', itemCount: results.length });
+
+  // Prefetch thumbnails for visible search results during idle time
+  const resultThumbnails = useMemo(() => results.map(r => r.thumbnail ?? null), [results]);
+  usePrefetchImages(resultThumbnails, { auto: true, limit: 10 });
 
   const debouncedQuery = useDebounce(query, 300);
 
@@ -176,6 +191,11 @@ export const MobileSearch = ({
       setSuggestionsVisible(false);
     },
     [filterValues, trackEvent]
+  );
+
+  const handleResultPress = useCallback(
+    (item: SearchResultItem) => onResultPress?.(item),
+    [onResultPress]
   );
 
   React.useEffect(() => {
@@ -302,6 +322,8 @@ export const MobileSearch = ({
       {showSuggestions && query.length > 0 && suggestions.length > 0 && !showResults && (
         <View style={styles.suggestSection}>
           <Text style={styles.suggestLabel}>Suggestions</Text>
+          {suggestions.map(s => (
+            <SuggestionItem key={s} suggestion={s} onPress={() => handleSelectSuggestion(s)} />
           {suggestions.map((s: string) => (
             <TouchableOpacity
               key={s}
@@ -325,6 +347,8 @@ export const MobileSearch = ({
           <FlatList
             data={results}
             keyExtractor={item => item.id}
+            renderItem={({ item }) => (
+              <SearchResultCard item={item} onPress={() => handleResultPress(item)} />
             renderItem={({ item }: { item: SearchResultItem }) => (
               <SearchResultCard item={item} onPress={() => onResultPress?.(item)} />
             )}

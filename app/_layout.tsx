@@ -5,7 +5,7 @@ import { Alert } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
-import { MemoryProfilerOverlay } from '../components/DevTools';
+import { CacheStatusOverlay, MemoryProfilerOverlay } from '../components/DevTools';
 import { RetryErrorBoundary } from '../components/ErrorBoundary/RetryErrorBoundary';
 import '../global.css'; // NativeWind CSS
 import { AnalyticsProvider, ErrorBoundary, OfflineIndicatorProvider } from '../src/components';
@@ -14,12 +14,18 @@ import { useAnalytics } from '../src/hooks';
 import { useDeepLink } from '../src/hooks/useDeepLink';
 import { preloadService } from '../src/services/preloadService';
 import { sessionRestorationService } from '../src/services/sessionRestoration';
+import { scrollPositionService } from '../src/services/scrollPositionService';
 import { useAppStore } from '../src/store';
 import { getPathFromDeepLink } from '../src/utils/linkParser';
 import { prefetchExternalResources } from '../src/utils/resourceHints';
 
 // Kick off resource hints early
 prefetchExternalResources();
+
+// Clear old scroll positions on app startup
+scrollPositionService.clearOldPositions().catch(() => {
+  // Silently handle cleanup errors
+});
 
 const ScreenTracker = () => {
   const pathname = usePathname();
@@ -150,7 +156,12 @@ const RootLayout = () => {
                 <Stack screenOptions={{ headerShown: false }} />
               </OfflineIndicatorProvider>
             </GestureHandlerRootView>
-            {__DEV__ && <MemoryProfilerOverlay />}
+            {__DEV__ && (
+              <>
+                <MemoryProfilerOverlay />
+                <CacheStatusOverlay />
+              </>
+            )}
           </AnalyticsProvider>
         </KeyboardDelegateProvider>
       </RetryErrorBoundary>

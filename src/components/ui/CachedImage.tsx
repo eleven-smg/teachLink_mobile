@@ -1,5 +1,6 @@
-// eslint-disable-next-line import/no-unresolved
 import { Image as ExpoImage, ImageProps as ExpoImageProps } from 'expo-image';
+import React, { memo, useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -113,7 +114,7 @@ function resolveStyleDimension(
  * />
  * ```
  */
-export const CachedImage: React.FC<CachedImageProps> = ({
+const CachedImageComponent: React.FC<CachedImageProps> = ({
   uri,
   alt,
   showLoadingIndicator = true,
@@ -148,6 +149,11 @@ export const CachedImage: React.FC<CachedImageProps> = ({
       preferWebp: true,
     });
   }, [resolvedUri, targetWidth, targetHeight, styleWidth, styleHeight, dataSaverEnabled]);
+
+  // These were part of a dimension-detection feature that was removed;
+  // kept as undefined so the JSX guards below remain falsy without ReferenceError.
+  const aspectRatioStyle: undefined = undefined;
+  const detectedDimensions: undefined = undefined;
 
   const [isLoading, setIsLoading] = useState(!!resolvedUri);
   const [, setError] = useState<Error | null>(null);
@@ -282,4 +288,5 @@ const styles = StyleSheet.create({
   },
 });
 
+export const CachedImage = memo(CachedImageComponent);
 export default CachedImage;
