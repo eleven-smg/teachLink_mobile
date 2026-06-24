@@ -87,7 +87,17 @@
         }
       ],
       "expo-speech-recognition",
-      "expo-video"
+      "expo-video",
+      "./plugins/withProguard.js",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ]
     ],
     "notification": {
       "icon": "./assets/notification-icon.png",

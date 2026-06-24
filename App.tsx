@@ -1,12 +1,11 @@
+import * as Font from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef } from 'react';
 import { Alert, AppState, AppStateStatus, InteractionManager, LogBox } from 'react-native';
 
 import StorybookUI from './.rnstorybook';
 import './global.css';
-
-import * as Font from 'expo-font';
-import * as SplashScreen from 'expo-splash-screen';
 import { ErrorBoundary } from './src/components/common/ErrorBoundary';
 import { initializeLogging } from './src/config/logging';
 import { AuthProvider, useAdaptiveTheme, useReviewMetrics } from './src/hooks';
@@ -19,13 +18,14 @@ import { featureCapabilities } from './src/services/featureCapabilities';
 import { inAppReviewService } from './src/services/inAppReview';
 import { mobileAuthService } from './src/services/mobileAuth';
 import {
-    addNotificationReceivedListener,
-    getLastNotificationResponse,
-    removeNotificationListener,
-    registerForPushNotifications, // Added missing native push helpers
-    registerTokenWithBackend,
+  addNotificationReceivedListener,
+  getLastNotificationResponse,
+  removeNotificationListener,
+  registerForPushNotifications, // Added missing native push helpers
+  registerTokenWithBackend,
 } from './src/services/pushNotifications';
 import { requestQueue } from './src/services/requestQueue';
+import { initializeSecureStorage } from './src/services/secureStorage'; // Added missing storage helper mock path
 import socketService from './src/services/socket';
 import { syncService } from './src/services/syncService'; // Fixed naming convention from the merge conflict
 import { useAppStore, useNotificationStore } from './src/store'; // Added missing store imports
@@ -34,7 +34,6 @@ import { handleCacheVersionUpdate } from './src/utils/cacheVersioning';
 import { requireEnvVariables } from './src/utils/env';
 import { appLogger } from './src/utils/logger';
 import { handleNotificationReceived } from './src/utils/notificationHandlers';
-import { initializeSecureStorage } from './src/services/secureStorage'; // Added missing storage helper mock path
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -62,10 +61,10 @@ if (__DEV__) {
 }
 
 const App = () => {
-  const theme = useAppStore((state) => state.theme);
+  const theme = useAppStore(state => state.theme);
   useAdaptiveTheme();
   // Using imported hook from the merge logic if needed downstream
-  useReviewMetrics(); 
+  useReviewMetrics();
 
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [appIsReady, setAppIsReady] = React.useState(false);
@@ -81,6 +80,9 @@ const App = () => {
         // 2. Version-based cache invalidation: clear stale caches on app/data version bump
         const appVersion = require('./package.json').version as string;
         await handleCacheVersionUpdate(appVersion);
+
+        // 3. Warm critical API caches before first render.
+        await warmCriticalCaches();
       } catch (e) {
         console.warn('Error during app initialization:', e);
       } finally {
@@ -103,8 +105,8 @@ const App = () => {
     crashReportingService.init();
 
     // Initialize secure storage (Keychain/Keystore) for encrypted token storage
-    initializeSecureStorage().catch((error) => {
-      appLogger.errorSync('Failed to initialize secure storage:', error);
+    initializeSecureStorage().catch(error => {
+      appLogger.errorSync('Failed to initialize secure storage:', error); // Fixed 'logger.error' to 'appLogger.errorSync'
     });
 
     // Add global handler for unhandled promise rejections
@@ -120,14 +122,40 @@ const App = () => {
       global.onunhandledrejection = unhandledRejectionHandler;
     }
 
-    // Notification listeners (lightweight — no I/O or network)
-    const notificationCleanup = setupNotificationNavigation();
-    const subscription = addNotificationReceivedListener(handleNotificationReceived);
+    // Connect to socket when app starts
+    socketService.connect();
 
-    // Check if app was launched from a notification (lightweight storage read)
-    getLastNotificationResponse().then(response => {
-      if (response) {
-        appLogger.infoSync('App launched from notification', { response });
+    // Initialize feature capability detection (non-blocking)
+    featureCapabilities
+      .checkAllCapabilities()
+      .then(capabilities => {
+        const degradationStore = useDegradationStore.getState();
+        appLogger.infoSync('[App] Feature capabilities checked', {
+          camera: capabilities.camera.status,
+          notifications: capabilities.pushNotifications.status,
+          location: capabilities.location.status,
+        });
+        // Update degradation store with current feature statuses
+        Object.entries(capabilities).forEach(([feature, info]) => {
+          if (feature !== 'checkedAt' && 'status' in info) {
+            degradationStore.setFeatureStatus(feature as any, info.status);
+          }
+        });
+      })
+      .catch(error => {
+        appLogger.errorSync(
+          '[App] Error checking feature capabilities',
+          error instanceof Error ? error : new Error(String(error))
+        );
+      });
+
+    // Initialize push notifications: request permissions and get device token
+    registerForPushNotifications().then(async token => {
+      if (token) {
+        const { setPushToken, setTokenRegistered } = useNotificationStore.getState();
+        setPushToken(token);
+        const registered = await registerTokenWithBackend(token);
+        setTokenRegistered(registered);
       }
     });
 

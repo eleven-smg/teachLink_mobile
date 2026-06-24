@@ -1,4 +1,4 @@
-import apiClient from "./axios.config";
+import apiClient from './axios.config';
 
 export const apiService = {
   get: (url: string, params?: any) => apiClient.get(url, { params }),
@@ -7,15 +7,26 @@ export const apiService = {
   delete: (url: string) => apiClient.delete(url),
 };
 
-export { clearCache, fetchWithSWR, invalidateCache } from "./cache";
-export { courseApi } from "./courseApi";
+export {
+  clearCache,
+  clearPersistentCache,
+  fetchWithSWR,
+  getCacheStats,
+  invalidateCache,
+  invalidateCacheByPrefix,
+  invalidateCacheByTags,
+  invalidateCacheForBatchRequests,
+  invalidateCacheForMutation,
+  resetCacheStats,
+} from './cache';
+export { courseApi } from './courseApi';
 export {
   buildCursor,
   buildCursorCacheKey,
   paginateWithCursor,
   parseCursor,
-} from "./cursorPagination";
-export { userApi } from "./userApi";
-export { batchClient } from "./batchClient";
+} from './cursorPagination';
+export { userApi } from './userApi';
+export { batchClient } from './batchClient';
 
 export default apiService;
