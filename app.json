@@ -62,8 +62,18 @@
       "output": "static",
       "favicon": "./assets/icon.png"
     },
+    "updates": {
+      "url": "https://u.expo.dev/teachlink-mobile",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "plugins": [
       "expo-router",
+      "expo-updates",
       [
         "expo-splash-screen",
         {

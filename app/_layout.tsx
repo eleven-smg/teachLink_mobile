@@ -10,7 +10,9 @@ import { RetryErrorBoundary } from '../components/ErrorBoundary/RetryErrorBounda
 import '../global.css'; // NativeWind CSS
 import { AnalyticsProvider, ErrorBoundary, OfflineIndicatorProvider } from '../src/components';
 import { KeyboardDelegateProvider } from '../src/components/common/KeyboardDelegateProvider';
+import { UpdateNotificationModal } from '../src/components/common/UpdateNotificationModal';
 import { useAnalytics } from '../src/hooks';
+import { useAppUpdate } from '../src/hooks/useAppUpdate';
 import { useDeepLink } from '../src/hooks/useDeepLink';
 import { preloadService } from '../src/services/preloadService';
 import { sessionRestorationService } from '../src/services/sessionRestoration';
@@ -63,6 +65,24 @@ const ScreenTracker = () => {
   }, [pathname, segments, trackScreen, router]);
 
   return null;
+};
+
+const UpdateChecker = () => {
+  const { checkResult, isDownloading, error, applyUpdate, openStore, dismiss } = useAppUpdate(true);
+
+  const showModal = checkResult?.updateAvailable === true;
+
+  return (
+    <UpdateNotificationModal
+      visible={showModal}
+      checkResult={checkResult}
+      isDownloading={isDownloading}
+      error={error}
+      onApply={applyUpdate}
+      onOpenStore={openStore}
+      onDismiss={dismiss}
+    />
+  );
 };
 
 const ThemeSync = () => {
@@ -152,6 +172,7 @@ const RootLayout = () => {
           <AnalyticsProvider>
             <ScreenTracker />
             <ThemeSync />
+            <UpdateChecker />
             <AppLifecycleManager />
             <GestureHandlerRootView style={{ flex: 1 }}>
               <OfflineIndicatorProvider>

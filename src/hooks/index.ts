@@ -51,4 +51,6 @@ export { OptimizedVideoGesturesView, useOptimizedVideoGestures } from './useOpti
 export * from './useTouchDeduplication';
 export { useSearchIndex } from './useSearchIndex';
 export type { UseSearchIndexResult } from './useSearchIndex';
+export { useAppUpdate } from './useAppUpdate';
+export type { UseAppUpdateResult, UseAppUpdateState, UseAppUpdateActions } from './useAppUpdate';
 

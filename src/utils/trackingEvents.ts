@@ -54,6 +54,17 @@ export enum AnalyticsEvent {
   APP_BACKGROUND = 'app_background',
   APP_FOREGROUND = 'app_foreground',
 
+  // App update events
+  UPDATE_CHECK_STARTED = 'update_check_started',
+  UPDATE_AVAILABLE = 'update_available',
+  UPDATE_NOT_AVAILABLE = 'update_not_available',
+  UPDATE_DOWNLOAD_STARTED = 'update_download_started',
+  UPDATE_DOWNLOAD_COMPLETED = 'update_download_completed',
+  UPDATE_DOWNLOAD_FAILED = 'update_download_failed',
+  UPDATE_APPLIED = 'update_applied',
+  UPDATE_DISMISSED = 'update_dismissed',
+  UPDATE_STORE_REDIRECT = 'update_store_redirect',
+
   // Core Web Vitals
   WEB_VITALS_LCP = 'web_vitals_lcp',
   WEB_VITALS_FID = 'web_vitals_fid',
