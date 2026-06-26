@@ -1,4 +1,4 @@
-# [1.5.0](https://github.com/rinafcode/teachLink_mobile/compare/v1.15.0...v1.5.0) (2026-06-26)
+# [1.6.0](https://github.com/rinafcode/teachLink_mobile/compare/v1.15.0...v1.6.0) (2026-06-26)
 
 
 ### Bug Fixes
@@ -43,6 +43,7 @@
 * Implement graceful degradation for camera and location features ([e97e70c](https://github.com/rinafcode/teachLink_mobile/commit/e97e70c5b8b84706ed7982507d45a2da0e1bb1dd))
 * implement idle task scheduling for non-critical initialization ([#243](https://github.com/rinafcode/teachLink_mobile/issues/243)) ([b936cdb](https://github.com/rinafcode/teachLink_mobile/commit/b936cdb8a45c043f93dae828e2579c9c7935852a))
 * implement intersection observer and viewability hooks for OptimizedVideoPlayer visibility management ([7908ec4](https://github.com/rinafcode/teachLink_mobile/commit/7908ec4338db36b4a430f9db9da20a379461bb15))
+* implement lazy video initialization for MobileVideoPlayer ([fe44e52](https://github.com/rinafcode/teachLink_mobile/commit/fe44e52704d4f44e2c8722d8d48a383cc63bd35e))
 * Implement progressive image loading with LQIP and WebP ([2f7fa53](https://github.com/rinafcode/teachLink_mobile/commit/2f7fa53a9c00d1da61f7aefbc063dd33f735aafb))
 * implement smart in-app review system ([ad0e3ab](https://github.com/rinafcode/teachLink_mobile/commit/ad0e3ab0d6256f09e83f74c0dd52387fdd16a317))
 * implement touch event deduplication to prevent double-triggers ([#330](https://github.com/rinafcode/teachLink_mobile/issues/330)) ([c3c74db](https://github.com/rinafcode/teachLink_mobile/commit/c3c74dbf743b55e851dc2ea1031b697663a88254))
