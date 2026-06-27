@@ -8,17 +8,16 @@ import {
   unwrapPersistedState,
 } from './persistence';
 import { useReviewStore } from './reviewStore';
+import apiService from '../services/api';
 import { inAppReviewService, ReviewTrigger } from '../services/inAppReview';
+import { appLogger } from '../utils/logger';
 
 const triggerAchievementReview = () => {
-  const { incrementAchievementsUnlocked, getMetrics, recordReviewRequest } =
-    useReviewStore.getState();
+  const { incrementAchievementsUnlocked, getMetrics, recordReviewRequest } = useReviewStore.getState();
   incrementAchievementsUnlocked();
-  inAppReviewService
-    .requestReview(ReviewTrigger.ACHIEVEMENT_UNLOCKED, getMetrics())
-    .then(result => {
-      recordReviewRequest(ReviewTrigger.ACHIEVEMENT_UNLOCKED, result.shown, result.reason);
-    });
+  inAppReviewService.requestReview(ReviewTrigger.ACHIEVEMENT_UNLOCKED, getMetrics()).then((result) => {
+    recordReviewRequest(ReviewTrigger.ACHIEVEMENT_UNLOCKED, result.shown, result.reason);
+  });
 };
 
 export type BadgeRarity = 'common' | 'rare' | 'epic' | 'legendary';
@@ -52,7 +51,7 @@ interface AchievementState {
   unlockedCount: number;
   isLoaded: boolean;
   loadAchievements: () => void;
-  unlockAchievement: (id: string) => void;
+  unlockAchievement: (id: string) => Promise<void>;
   updateProgress: (id: string, current: number) => void;
   isAchievementUnlocked: (id: string) => boolean;
   getUnlockedAchievements: () => Achievement[];
@@ -286,97 +285,108 @@ export const useAchievementStore = create<AchievementState>()(
       return {
         ...createInitialAchievementState(),
 
-        loadAchievements: () => {
-          const { isLoaded, achievements } = get();
-          if (isLoaded) return;
-          set({
-            achievements: achievements.length > 0 ? achievements : DEFAULT_ACHIEVEMENTS,
-            isLoaded: true,
-          });
-        },
+      loadAchievements: () => {
+        const { isLoaded, achievements } = get();
+        if (isLoaded) return;
+        set({
+          achievements: achievements.length > 0 ? achievements : DEFAULT_ACHIEVEMENTS,
+          isLoaded: true,
+        });
+      },
 
-        unlockAchievement: (id: string) =>
-          set(state => {
-            const achievement = state.achievements.find(a => a.id === id);
-            if (!achievement || !achievement.isLocked) return state;
+      unlockAchievement: async (id: string) => {
+        const previousAchievements = get().achievements;
+        const achievement = previousAchievements.find(a => a.id === id);
+        if (!achievement || !achievement.isLocked) return;
 
-            const updatedAchievements = state.achievements.map(a =>
-              a.id === id
-                ? {
-                    ...a,
-                    isLocked: false,
-                    unlockedAt: new Date().toLocaleDateString('en-US', {
-                      month: 'short',
-                      year: 'numeric',
-                    }),
-                  }
-                : a
-            );
-
-            setTimeout(triggerAchievementReview, 500);
-
-            return {
-              achievements: updatedAchievements,
-              achievementProgress: snapshotAchievementProgress(updatedAchievements),
-              unlockedCount: updatedAchievements.filter(a => !a.isLocked).length,
-            };
-          }),
-
-        updateProgress: (id: string, current: number) =>
-          set(state => {
-            const achievement = state.achievements.find(a => a.id === id);
-            if (!achievement || !achievement.isLocked) return state;
-
-            const updatedAchievements = state.achievements.map(a => {
-              if (a.id !== id) return a;
-
-              const progress = a.progress ? { ...a.progress, current } : { current, total: 1 };
-
-              if (progress.current >= progress.total) {
-                setTimeout(triggerAchievementReview, 500);
-                return {
-                  ...a,
-                  isLocked: false,
-                  unlockedAt: new Date().toLocaleDateString('en-US', {
-                    month: 'short',
-                    year: 'numeric',
-                  }),
-                  progress,
-                };
+        // Optimistic update
+        const updatedAchievements = previousAchievements.map(a =>
+          a.id === id
+            ? {
+                ...a,
+                isLocked: false,
+                unlockedAt: new Date().toLocaleDateString('en-US', {
+                  month: 'short',
+                  year: 'numeric',
+                }),
               }
+            : a
+        );
+        set({
+          achievements: updatedAchievements,
+          achievementProgress: snapshotAchievementProgress(updatedAchievements),
+          unlockedCount: updatedAchievements.filter(a => !a.isLocked).length,
+        });
+        setTimeout(triggerAchievementReview, 500);
 
-              return { ...a, progress };
-            });
-
-            return {
-              achievements: updatedAchievements,
-              achievementProgress: snapshotAchievementProgress(updatedAchievements),
-              unlockedCount: updatedAchievements.filter(a => !a.isLocked).length,
-            };
-          }),
-
-        isAchievementUnlocked: (id: string) => {
-          const achievement = get().achievements.find(a => a.id === id);
-          return achievement ? !achievement.isLocked : false;
-        },
-
-        getUnlockedAchievements: () => {
-          return get().achievements.filter(a => !a.isLocked);
-        },
-
-        resetAchievements: () =>
+        try {
+          await apiService.post('/api/achievements/unlock', { achievementId: id });
+        } catch {
+          // Rollback on server error
           set({
-            achievements: buildAchievementsFromProgress({}),
-            achievementProgress: {},
-            unlockedCount: 0,
-          }),
+            achievements: previousAchievements,
+            achievementProgress: snapshotAchievementProgress(previousAchievements),
+            unlockedCount: previousAchievements.filter(a => !a.isLocked).length,
+          });
+          appLogger.warn('Achievement sync failed, reverting optimistic update');
+        }
+      },
 
-        initializeAchievements: (achievements: Achievement[]) =>
-          set({
-            achievements,
-            achievementProgress: snapshotAchievementProgress(achievements),
-            unlockedCount: achievements.filter(a => !a.isLocked).length,
-          }),
+      updateProgress: (id: string, current: number) =>
+        set(state => {
+          const achievement = state.achievements.find(a => a.id === id);
+          if (!achievement || !achievement.isLocked) return state;
+
+          const updatedAchievements = state.achievements.map(a => {
+            if (a.id !== id) return a;
+
+            const progress = a.progress ? { ...a.progress, current } : { current, total: 1 };
+
+            if (progress.current >= progress.total) {
+              setTimeout(triggerAchievementReview, 500);
+              return {
+                ...a,
+                isLocked: false,
+                unlockedAt: new Date().toLocaleDateString('en-US', {
+                  month: 'short',
+                  year: 'numeric',
+                }),
+                progress,
+              };
+            }
+
+            return { ...a, progress };
+          });
+
+          return {
+            achievements: updatedAchievements,
+            achievementProgress: snapshotAchievementProgress(updatedAchievements),
+            unlockedCount: updatedAchievements.filter(a => !a.isLocked).length,
+          };
+        }),
+
+      isAchievementUnlocked: (id: string) => {
+        const achievement = get().achievements.find(a => a.id === id);
+        return achievement ? !achievement.isLocked : false;
+      },
+
+      getUnlockedAchievements: () => {
+        return get().achievements.filter(a => !a.isLocked);
+      },
+
+      resetAchievements: () =>
+        set({
+          achievements: buildAchievementsFromProgress({}),
+          achievementProgress: {},
+          unlockedCount: 0,
+        }),
+
+      initializeAchievements: (achievements: Achievement[]) =>
+        set({
+          achievements,
+          achievementProgress: snapshotAchievementProgress(achievements),
+          unlockedCount: achievements.filter(a => !a.isLocked).length,
+        }),
       };
     },
     {

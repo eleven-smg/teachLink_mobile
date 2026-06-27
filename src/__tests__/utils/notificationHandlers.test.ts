@@ -1,3 +1,6 @@
+import * as Sentry from '@sentry/react-native';
+import * as Notifications from 'expo-notifications';
+
 import { NotificationType, NotificationData } from '../../types/notifications';
 import {
   setNavigationRef,
@@ -6,10 +9,24 @@ import {
   handleLearningReminder,
   handleAchievementUnlock,
   handleCommunityActivity,
+  handleNotificationResponse,
   buildDeepLink,
   parseDeepLink,
   validateNotificationPayload,
 } from '../../utils/notificationHandlers';
+
+jest.mock('@sentry/react-native', () => ({
+  captureMessage: jest.fn(),
+}));
+
+jest.mock('../../store/notificationStore', () => ({
+  useNotificationStore: {
+    getState: jest.fn(() => ({
+      isNotificationTypeEnabled: jest.fn(() => true),
+      recordEngagement: jest.fn(),
+    })),
+  },
+}));
 
 describe('notificationHandlers', () => {
   const mockNavigate = jest.fn();
@@ -257,6 +274,88 @@ describe('notificationHandlers', () => {
   });
 });
 
+describe('screenName security gate (handleNotificationResponse)', () => {
+  const mockSentryCaptureMessage = Sentry.captureMessage as jest.Mock;
+
+  function makeResponse(data: Record<string, unknown>): Notifications.NotificationResponse {
+    return {
+      notification: {
+        request: {
+          content: { data },
+        },
+      },
+    } as unknown as Notifications.NotificationResponse;
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockIsReady.mockReturnValue(true);
+    setNavigationRef({
+      navigate: mockNavigate,
+      isReady: mockIsReady,
+    });
+  });
+
+  it('navigates to default screen when screenName is allowlisted', () => {
+    handleNotificationResponse(
+      makeResponse({
+        type: NotificationType.COURSE_UPDATE,
+        screenName: 'CourseDetail',
+        courseId: 'c-1',
+      })
+    );
+    expect(mockNavigate).toHaveBeenCalledWith('CourseDetail', { courseId: 'c-1' });
+    expect(mockSentryCaptureMessage).not.toHaveBeenCalled();
+  });
+
+  it('blocks navigation and warns when screenName is not in allowlist', () => {
+    handleNotificationResponse(
+      makeResponse({
+        type: NotificationType.COURSE_UPDATE,
+        screenName: 'AdminPanel',
+      })
+    );
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockSentryCaptureMessage).toHaveBeenCalledWith(
+      expect.stringContaining('AdminPanel'),
+      { level: 'warning' }
+    );
+  });
+
+  it('blocks navigation and warns when screenName has invalid type', () => {
+    handleNotificationResponse(
+      makeResponse({
+        type: NotificationType.COURSE_UPDATE,
+        screenName: 42,
+      })
+    );
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockSentryCaptureMessage).toHaveBeenCalledWith(
+      'Notification payload has invalid screenName',
+      { level: 'warning' }
+    );
+  });
+
+  it('navigates to default screen when screenName is absent', () => {
+    handleNotificationResponse(
+      makeResponse({
+        type: NotificationType.COURSE_UPDATE,
+        courseId: 'c-1',
+      })
+    );
+    expect(mockNavigate).toHaveBeenCalledWith('CourseDetail', { courseId: 'c-1' });
+    expect(mockSentryCaptureMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not crash when response has no data at all', () => {
+    handleNotificationResponse(
+      makeResponse({})
+    );
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockSentryCaptureMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('validateNotificationPayload', () => {
   it('returns a valid NotificationData for a clean payload', () => {
     const raw = { type: NotificationType.COURSE_UPDATE, courseId: 'c-1' };
@@ -345,5 +444,27 @@ describe('validateNotificationPayload', () => {
       postId: 'p-1',
       deepLink: 'teachlink://community/p-1',
     });
+  });
+
+  it('includes screenName when present and valid', () => {
+    const raw = {
+      type: NotificationType.COURSE_UPDATE,
+      screenName: 'Home',
+    };
+    const result = validateNotificationPayload(raw);
+    expect(result).toEqual({
+      type: NotificationType.COURSE_UPDATE,
+      screenName: 'Home',
+    });
+  });
+
+  it('drops screenName when it is not a string', () => {
+    const raw = {
+      type: NotificationType.COURSE_UPDATE,
+      screenName: 42,
+    };
+    const result = validateNotificationPayload(raw);
+    expect(result).toBeDefined();
+    expect(result?.screenName).toBeUndefined();
   });
 });

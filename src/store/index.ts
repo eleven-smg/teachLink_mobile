@@ -21,9 +21,9 @@ interface AppState {
   refreshToken: string | null;
   sessionExpiresAt: number | null;
   sessionExpiringSoon: boolean;
-  theme: 'light' | 'dark';
   isLoading: boolean;
   error: string | null;
+  theme: 'light' | 'dark';
   setUser: (user: User | null) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setTokens: (accessToken: string, refreshToken: string, expiresAt: number | Date) => void;
@@ -60,57 +60,57 @@ export const useAppStore = create<AppState>()(
 
         return {
           ...INITIAL_APP_STATE,
-          setUser: user => {
-            set({ user, isAuthenticated: !!user }, false, 'setUser');
-            // Sync Sentry scope with the signed-in user so every subsequent
-            // error report is automatically tagged with user identity.
-            if (user) {
-              sentryContextService.setUser({
-                id: user.id,
-                email: user.email,
-                username: user.name,
-                role: user.role,
-              });
-            } else {
-              sentryContextService.clearUser();
-            }
-          },
-          setTheme: theme => set({ theme }, false, 'setTheme'),
-          setTokens: (accessToken, refreshToken, sessionExpiresAt) =>
-            set(
-              {
-                accessToken,
-                refreshToken,
-                sessionExpiresAt: toUnixMs(sessionExpiresAt),
-              },
-              false,
-              'setTokens'
-            ),
-          setSessionExpiringSoon: sessionExpiringSoon =>
-            set({ sessionExpiringSoon }, false, 'setSessionExpiringSoon'),
-          setAuthLoading: isAuthLoading => set({ isAuthLoading }, false, 'setAuthLoading'),
-          setAuthError: authError => set({ authError }, false, 'setAuthError'),
-          logout: () => {
-            set(
-              {
-                user: null,
-                isAuthenticated: false,
-                isAuthLoading: false,
-                authError: null,
-                accessToken: null,
-                refreshToken: null,
-                sessionExpiresAt: null,
-                sessionExpiringSoon: false,
-              },
-              false,
-              'logout'
-            );
-            // Clear Sentry user scope and reset breadcrumb trail on logout
+        setUser: user => {
+          set({ user, isAuthenticated: !!user }, false, 'setUser');
+          // Sync Sentry scope with the signed-in user so every subsequent
+          // error report is automatically tagged with user identity.
+          if (user) {
+            sentryContextService.setUser({
+              id: user.id,
+              email: user.email,
+              username: user.name,
+              role: user.role,
+            });
+          } else {
             sentryContextService.clearUser();
-            sentryContextService.resetSession();
-          },
-          setLoading: isLoading => set({ isLoading }, false, 'setLoading'),
-          setError: error => set({ error }, false, 'setError'),
+          }
+        },
+        setTheme: theme => set({ theme }, false, 'setTheme'),
+        setTokens: (accessToken, refreshToken, sessionExpiresAt) =>
+          set(
+            {
+              accessToken,
+              refreshToken,
+              sessionExpiresAt: toUnixMs(sessionExpiresAt),
+            },
+            false,
+            'setTokens'
+          ),
+        setSessionExpiringSoon: sessionExpiringSoon =>
+          set({ sessionExpiringSoon }, false, 'setSessionExpiringSoon'),
+        setAuthLoading: isAuthLoading => set({ isAuthLoading }, false, 'setAuthLoading'),
+        setAuthError: authError => set({ authError }, false, 'setAuthError'),
+        logout: () => {
+          set(
+            {
+              user: null,
+              isAuthenticated: false,
+              isAuthLoading: false,
+              authError: null,
+              accessToken: null,
+              refreshToken: null,
+              sessionExpiresAt: null,
+              sessionExpiringSoon: false,
+            },
+            false,
+            'logout'
+          );
+          // Clear Sentry user scope and reset breadcrumb trail on logout
+          sentryContextService.clearUser();
+          sentryContextService.resetSession();
+        },
+        setLoading: isLoading => set({ isLoading }, false, 'setLoading'),
+        setError: error => set({ error }, false, 'setError'),
         };
       }),
       {

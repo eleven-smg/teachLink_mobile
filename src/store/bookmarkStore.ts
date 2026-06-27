@@ -18,6 +18,17 @@ interface BookmarkState {
   addBookmark: (item: BookmarkItem) => Promise<void>;
   removeBookmark: (itemId: string) => Promise<void>;
   isBookmarked: (itemId: string) => boolean;
+  validateBookmarks: () => Promise<void>;
+}
+
+/** Returns true if the course exists — checks API as the source of truth. */
+async function courseExists(courseId: string): Promise<boolean> {
+  try {
+    await apiService.get(`/api/courses/${courseId}/exists`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const INITIAL_BOOKMARK_STATE = {
@@ -36,6 +47,15 @@ export const useBookmarkStore = create<BookmarkState>()(
         ...INITIAL_BOOKMARK_STATE,
 
         addBookmark: async item => {
+          if (item.itemType === 'course') {
+            const exists = await courseExists(item.itemId);
+            if (!exists) {
+              logger.warn('bookmarkStore: course not found, bookmark rejected', {
+                courseId: item.itemId,
+              });
+              return;
+            }
+          }
           set(s => ({ bookmarks: [...s.bookmarks, item] }));
           try {
             await apiService.post('/api/bookmarks', {
@@ -61,6 +81,17 @@ export const useBookmarkStore = create<BookmarkState>()(
         },
 
         isBookmarked: itemId => get().bookmarks.some(b => b.itemId === itemId),
+
+        validateBookmarks: async () => {
+          const courseBookmarks = get().bookmarks.filter(b => b.itemType === 'course');
+          for (const bookmark of courseBookmarks) {
+            const exists = await courseExists(bookmark.itemId);
+            if (!exists) {
+              logger.info('bookmarkStore: removing stale bookmark', { itemId: bookmark.itemId });
+              set(s => ({ bookmarks: s.bookmarks.filter(b => b.itemId !== bookmark.itemId) }));
+            }
+          }
+        },
       };
     },
     {

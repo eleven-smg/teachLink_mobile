@@ -25,6 +25,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 import { asyncStorageJSONStorage, createHydrationErrorRecovery } from './persistence';
+import { useFeatureFlagStore } from './featureFlagStore';
 import { FeatureStatus, FeatureType } from '../services/featureCapabilities';
 
 export interface DegradationNotification {
@@ -42,6 +43,7 @@ export interface DegradationPreferences {
   autoDismissDegradationAlerts: boolean; // Auto-dismiss alerts after 5 seconds
   remindPermissionRetry: boolean; // Remind user to grant permissions after 1 hour
   enableFallbackUX: boolean; // Use fallback UX when features unavailable (always true)
+  respectRemoteFlags: boolean; // Check remote feature flags before marking feature available
 }
 
 interface DegradationState {
@@ -72,6 +74,7 @@ interface DegradationState {
   setShowDegradationBanners: (show: boolean) => void;
   setAutoDismissAlerts: (autoDismiss: boolean) => void;
   setRemindPermissionRetry: (remind: boolean) => void;
+  setRespectRemoteFlags: (respect: boolean) => void;
 }
 
 const DEFAULT_PREFERENCES: DegradationPreferences = {
@@ -79,6 +82,7 @@ const DEFAULT_PREFERENCES: DegradationPreferences = {
   autoDismissDegradationAlerts: true,
   remindPermissionRetry: true,
   enableFallbackUX: true,
+  respectRemoteFlags: true,
 };
 
 let notificationIdCounter = 0;
@@ -112,109 +116,123 @@ export const useDegradationStore = create<DegradationState>()(
       resetDegradationStoreAfterHydrationError = () => set(createInitialDegradationState());
 
       return {
-        // Initial state
-        // Stored as FeatureType[] — not Set — to survive JSON round-trips.
-        ...createInitialDegradationState(),
+      // Initial state
+      // Stored as FeatureType[] — not Set — to survive JSON round-trips.
+      ...createInitialDegradationState(),
 
-        // Feature status actions
-        setFeatureStatus: (feature, status) =>
-          set(state => {
-            const isDegraded =
-              status === FeatureStatus.PERMISSION_DENIED ||
-              status === FeatureStatus.HARDWARE_UNAVAILABLE ||
-              status === FeatureStatus.UNAVAILABLE;
-
-            // Use a Set for deduplication, then spread back to array for
-            // JSON-serialisability (Set -> {} under JSON.stringify).
-            const updatedSet = new Set(state.degradedFeatures);
-            if (isDegraded) {
-              updatedSet.add(feature);
-            } else {
-              updatedSet.delete(feature);
-            }
-
-            return {
-              degradedFeatures: [...updatedSet],
-              featureStatuses: {
-                ...state.featureStatuses,
-                [feature]: status,
-              },
-            };
-          }),
-
-        isFeatureDegraded: (feature: FeatureType): boolean => {
-          const status = get().featureStatuses[feature];
-          return (
+      // Feature status actions
+      setFeatureStatus: (feature, status) =>
+        set(state => {
+          const isDegraded =
             status === FeatureStatus.PERMISSION_DENIED ||
             status === FeatureStatus.HARDWARE_UNAVAILABLE ||
-            status === FeatureStatus.UNAVAILABLE
-          );
-        },
+            status === FeatureStatus.UNAVAILABLE;
 
-        getDegradedFeatures: (): FeatureType[] => {
-          const features: FeatureType[] = [];
-          for (const feature of Object.values(FeatureType)) {
-            if (get().isFeatureDegraded(feature as FeatureType)) {
-              features.push(feature as FeatureType);
-            }
+          // Use a Set for deduplication, then spread back to array for
+          // JSON-serialisability (Set -> {} under JSON.stringify).
+          const updatedSet = new Set(state.degradedFeatures);
+          if (isDegraded) {
+            updatedSet.add(feature);
+          } else {
+            updatedSet.delete(feature);
           }
-          return features;
-        },
 
-        // Notification actions
-        addNotification: (
-          notification: Omit<DegradationNotification, 'id' | 'showedAt'>
-        ): string => {
-          const id = `notif_${++notificationIdCounter}_${Date.now()}`;
-          const newNotification: DegradationNotification = {
-            ...notification,
-            id,
-            showedAt: new Date().toISOString(),
+          return {
+            degradedFeatures: [...updatedSet],
+            featureStatuses: {
+              ...state.featureStatuses,
+              [feature]: status,
+            },
           };
+        }),
 
-          set(state => ({
-            notifications: [newNotification, ...state.notifications].slice(0, 50), // Keep last 50
-          }));
+      isFeatureDegraded: (feature: FeatureType): boolean => {
+        const status = get().featureStatuses[feature];
+        const hardwareDegraded =
+          status === FeatureStatus.PERMISSION_DENIED ||
+          status === FeatureStatus.HARDWARE_UNAVAILABLE ||
+          status === FeatureStatus.UNAVAILABLE;
 
-          return id;
-        },
+        if (hardwareDegraded) return true;
 
-        dismissNotification: (notificationId: string, action?: string) => {
-          set(state => ({
-            notifications: state.notifications.map(n =>
-              n.id === notificationId
-                ? { ...n, dismissedAt: new Date().toISOString(), actionTaken: action }
-                : n
-            ),
-          }));
-        },
+        if (get().preferences.respectRemoteFlags) {
+          const featureFlags = useFeatureFlagStore.getState();
+          if (featureFlags.isEnabled(feature, true) === false) {
+            return true;
+          }
+        }
 
-        clearNotifications: () => {
-          set({ notifications: [] });
-        },
+        return false;
+      },
 
-        getUnreadNotifications: (): DegradationNotification[] => {
-          return get().notifications.filter(n => !n.dismissedAt);
-        },
+      getDegradedFeatures: (): FeatureType[] => {
+        const features: FeatureType[] = [];
+        for (const feature of Object.values(FeatureType)) {
+          if (get().isFeatureDegraded(feature as FeatureType)) {
+            features.push(feature as FeatureType);
+          }
+        }
+        return features;
+      },
 
-        // Preference actions
-        setShowDegradationBanners: (show: boolean) => {
-          set(state => ({
-            preferences: { ...state.preferences, showDegradationBanners: show },
-          }));
-        },
+      // Notification actions
+      addNotification: (notification: Omit<DegradationNotification, 'id' | 'showedAt'>): string => {
+        const id = `notif_${++notificationIdCounter}_${Date.now()}`;
+        const newNotification: DegradationNotification = {
+          ...notification,
+          id,
+          showedAt: new Date().toISOString(),
+        };
 
-        setAutoDismissAlerts: (autoDismiss: boolean) => {
-          set(state => ({
-            preferences: { ...state.preferences, autoDismissDegradationAlerts: autoDismiss },
-          }));
-        },
+        set(state => ({
+          notifications: [newNotification, ...state.notifications].slice(0, 50), // Keep last 50
+        }));
 
-        setRemindPermissionRetry: (remind: boolean) => {
-          set(state => ({
-            preferences: { ...state.preferences, remindPermissionRetry: remind },
-          }));
-        },
+        return id;
+      },
+
+      dismissNotification: (notificationId: string, action?: string) => {
+        set(state => ({
+          notifications: state.notifications.map(n =>
+            n.id === notificationId
+              ? { ...n, dismissedAt: new Date().toISOString(), actionTaken: action }
+              : n
+          ),
+        }));
+      },
+
+      clearNotifications: () => {
+        set({ notifications: [] });
+      },
+
+      getUnreadNotifications: (): DegradationNotification[] => {
+        return get().notifications.filter(n => !n.dismissedAt);
+      },
+
+      // Preference actions
+      setShowDegradationBanners: (show: boolean) => {
+        set(state => ({
+          preferences: { ...state.preferences, showDegradationBanners: show },
+        }));
+      },
+
+      setAutoDismissAlerts: (autoDismiss: boolean) => {
+        set(state => ({
+          preferences: { ...state.preferences, autoDismissDegradationAlerts: autoDismiss },
+        }));
+      },
+
+      setRemindPermissionRetry: (remind: boolean) => {
+        set(state => ({
+          preferences: { ...state.preferences, remindPermissionRetry: remind },
+        }));
+      },
+
+      setRespectRemoteFlags: (respect: boolean) => {
+        set(state => ({
+          preferences: { ...state.preferences, respectRemoteFlags: respect },
+        }));
+      },
       };
     },
     {

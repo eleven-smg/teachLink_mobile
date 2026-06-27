@@ -1,8 +1,11 @@
 import * as Notifications from 'expo-notifications';
+import * as Sentry from '@sentry/react-native';
+import { z } from 'zod';
 
 import logger from './logger';
 import { useNotificationStore } from '../store/notificationStore';
 import { NotificationData, NotificationType } from '../types/notifications';
+import { NOTIFICATION_SCREEN_ALLOWLIST } from '../config/security';
 
 type NavigationRef = {
   navigate: (screen: string, params?: Record<string, unknown>) => void;
@@ -13,6 +16,8 @@ let navigationRef: NavigationRef | null = null;
 
 /** Keys that must never appear in a trusted notification payload. */
 const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+const screenNameSchema = z.string().min(1);
 
 function isNotificationType(value: unknown): value is NotificationType {
   return (
@@ -48,14 +53,15 @@ export function validateNotificationPayload(value: unknown): NotificationData | 
 
   // Build the result from an explicit allow-list — never spread the raw object
   return {
-    type: maybeData.type,
-    courseId: typeof maybeData.courseId === 'string' ? maybeData.courseId : undefined,
+    type: raw.type,
+    courseId: typeof raw.courseId === 'string' ? raw.courseId : undefined,
     conversationId:
-      typeof maybeData.conversationId === 'string' ? maybeData.conversationId : undefined,
+      typeof raw.conversationId === 'string' ? raw.conversationId : undefined,
     achievementId:
-      typeof maybeData.achievementId === 'string' ? maybeData.achievementId : undefined,
-    postId: typeof maybeData.postId === 'string' ? maybeData.postId : undefined,
-    deepLink: typeof maybeData.deepLink === 'string' ? maybeData.deepLink : undefined,
+      typeof raw.achievementId === 'string' ? raw.achievementId : undefined,
+    postId: typeof raw.postId === 'string' ? raw.postId : undefined,
+    deepLink: typeof raw.deepLink === 'string' ? raw.deepLink : undefined,
+    screenName: typeof raw.screenName === 'string' ? raw.screenName : undefined,
   };
 }
 
@@ -89,6 +95,24 @@ export function handleNotificationResponse(response: Notifications.NotificationR
   }
 
   useNotificationStore.getState().recordEngagement();
+
+  // screenName validation + allowlist check (security gate)
+  if (data.screenName) {
+    const parsed = screenNameSchema.safeParse(data.screenName);
+    if (!parsed.success) {
+      Sentry.captureMessage('Notification payload has invalid screenName', {
+        level: 'warning',
+      });
+      return;
+    }
+    if (!NOTIFICATION_SCREEN_ALLOWLIST.has(parsed.data)) {
+      Sentry.captureMessage(
+        `Notification navigation blocked: screen "${parsed.data}" is not in the allowlist`,
+        { level: 'warning' }
+      );
+      return;
+    }
+  }
 
   // Route to appropriate handler
   switch (data.type) {
