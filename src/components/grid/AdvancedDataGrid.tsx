@@ -1,3 +1,5 @@
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { ArrowDown, ArrowUp, ArrowUpDown, Filter, FilterX, Upload } from 'lucide-react-native';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
@@ -12,18 +14,16 @@ import {
     View,
 } from 'react-native';
 
+import { GridExporter } from './GridExporter';
+import { GridFiltering } from './GridFiltering';
+import { InlineEditing } from './InlineEditing';
 import { useDataGrid, UseDataGridOptions } from '../../hooks/useDataGrid';
 import { batchImportCSV, BatchProgress } from '../../services/batchDataProcessor';
 import { ColumnDef, ExportFormat, GridRow, SortConfig, SortDirection } from '../../utils/gridUtils';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { Skeleton } from '../ui/Skeleton';
-import { GridExporter } from './GridExporter';
-import { GridFiltering } from './GridFiltering';
-import { InlineEditing } from './InlineEditing';
 
 // Import for document picking (web and native)
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -139,6 +139,15 @@ export const AdvancedDataGrid = <T extends GridRow = GridRow>({
 
   const keyExtractor = useCallback((item: T) => String(item.id), []);
 
+  const getDataRowLayout = useCallback(
+    (_data: ArrayLike<T> | null | undefined, index: number) => ({
+      length: DATA_ROW_HEIGHT,
+      offset: DATA_ROW_HEIGHT * index,
+      index,
+    }),
+    []
+  );
+
   const hasFilters = filters.length > 0;
 
   return (
@@ -210,6 +219,7 @@ export const AdvancedDataGrid = <T extends GridRow = GridRow>({
                 data={paginatedRows}
                 renderItem={renderRow}
                 keyExtractor={keyExtractor}
+                getItemLayout={getDataRowLayout}
                 removeClippedSubviews
                 initialNumToRender={15}
                 maxToRenderPerBatch={10}
@@ -599,6 +609,9 @@ const PaginationBar = ({
 };
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
+/** Estimated height of each data row for optimal FlatList virtualization */
+const DATA_ROW_HEIGHT = 40;
 
 const styles = StyleSheet.create({
   root: {

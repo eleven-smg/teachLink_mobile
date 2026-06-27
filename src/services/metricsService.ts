@@ -1,20 +1,23 @@
+// src/services/metricsService.ts
 /**
  * MetricsService — Issue #390
  *
  * Aggregates app health, performance, error-rate, and user metrics from the
- * existing analytics and crash-reporting services.  The service is designed to
+ * existing analytics and crash-reporting services. The service is designed to
  * work entirely on-device with the data we already collect; no new backend
  * endpoint is required.
  *
  * In production the collectors would query a real observability backend (e.g.
- * Datadog, Firebase Performance, Sentry).  For now they compute representative
+ * Datadog, Firebase Performance, Sentry). For now they compute representative
  * numbers from in-process counters and AsyncStorage so the dashboard renders
  * real, useful data in both dev and demo environments.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import logger from '../utils/logger';
+
 import { crashReportingService } from './crashReporting';
+import logger from '../utils/logger';
+import { memoryPressureService } from './memoryPressureService';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -27,20 +30,20 @@ export interface AppHealthMetrics {
   errorCount: number;
   /** Total fatal crashes this session */
   crashCount: number;
-  /** Whether a memory-leak warning is currently active */
+  /** Whether a memory‑leak warning is currently active */
   memoryLeakSuspected: boolean;
   /** Composite status derived from the above */
   status: 'healthy' | 'warning' | 'critical';
 }
 
 export interface PerformanceMetrics {
-  /** Average JS-thread frame time (ms) — below 16ms = 60fps */
+  /** Average JS‑thread frame time (ms) — below 16ms = 60fps */
   avgFrameTimeMs: number;
-  /** App launch-to-interactive time (ms) */
+  /** App launch‑to‑interactive time (ms) */
   launchTimeMs: number;
-  /** Hermes used-heap size (bytes) */
+  /** Hermes used‑heap size (bytes) */
   usedHeapBytes: number;
-  /** Hermes total-heap size (bytes) */
+  /** Hermes total‑heap size (bytes) */
   heapSizeBytes: number;
   /** Heap utilisation 0–100 */
   heapUtilPercent: number;
@@ -103,6 +106,9 @@ export interface DashboardSnapshot {
 const METRICS_STORAGE_KEY = '@teachlink/dashboard_metrics';
 const SESSION_START_KEY = '@teachlink/session_start_ts';
 
+// New buffer size constant (capped at 500 entries)
+const MAX_METRICS_BUFFER = 500;
+
 const DEFAULT_THRESHOLDS: AlertThresholds = {
   maxErrorsPerMinute: 5,
   maxHeapUtilPercent: 80,
@@ -120,6 +126,10 @@ class MetricsService {
   private errorTimestamps: number[] = [];
   private errorCategories: Record<string, number> = {};
 
+  // Interval IDs for periodic work
+  private flushIntervalId: ReturnType<typeof setInterval> | null = null;
+  private pressureCheckIntervalId: ReturnType<typeof setInterval> | null = null;
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   public async init(): Promise<void> {
@@ -135,6 +145,18 @@ class MetricsService {
     } catch (err) {
       logger.error('MetricsService: init error', err);
     }
+
+    // Schedule regular flush every 60 seconds
+    this.flushIntervalId = setInterval(() => {
+      void this.flushMetrics();
+    }, 60_000);
+
+    // Check memory‑pressure service periodically (every 10 seconds) and flush on pressure
+    this.pressureCheckIntervalId = setInterval(() => {
+      if (memoryPressureService.isUnderPressure()) {
+        void this.flushMetrics();
+      }
+    }, 10_000);
   }
 
   // ── Counters (called by analytics / crash hooks) ───────────────────────────
@@ -148,21 +170,22 @@ class MetricsService {
     this.eventsTrackedCount++;
   }
 
-  public recordApiResponse(durationMs: number): void {
-    this.apiResponseTimes.push(durationMs);
-    // Keep last 100 samples to avoid unbounded growth
-    if (this.apiResponseTimes.length > 100) {
-      this.apiResponseTimes.shift();
+  private addToBuffer<T>(buffer: T[], value: T): void {
+    buffer.push(value);
+    if (buffer.length > MAX_METRICS_BUFFER) {
+      // Remove the oldest entry (FIFO)
+      buffer.splice(0, buffer.length - MAX_METRICS_BUFFER);
     }
   }
 
+  public recordApiResponse(durationMs: number): void {
+    this.addToBuffer(this.apiResponseTimes, durationMs);
+  }
+
   public recordError(category: string = 'unknown'): void {
-    this.errorTimestamps.push(Date.now());
+    this.addToBuffer(this.errorTimestamps, Date.now());
     this.errorCategories[category] = (this.errorCategories[category] ?? 0) + 1;
-    // Keep last 500 timestamps
-    if (this.errorTimestamps.length > 500) {
-      this.errorTimestamps.shift();
-    }
+    // Keep category map reasonably sized – no explicit cap required
   }
 
   // ── Snapshot collection ────────────────────────────────────────────────────
@@ -204,15 +227,23 @@ class MetricsService {
     }
   }
 
+  // Flush raw metric buffers to storage and reset them
+  private async flushMetrics(): Promise<void> {
+    await this.collectSnapshot();
+    // Reset raw buffers after a successful flush
+    this.apiResponseTimes = [];
+    this.errorTimestamps = [];
+    this.errorCategories = {};
+    logger.debug('MetricsService: buffers flushed');
+  }
+
   // ── Private collectors ─────────────────────────────────────────────────────
 
   private collectAppHealth(): AppHealthMetrics {
     const errorCount = crashReportingService.getErrorCount();
-    // Treat errors > threshold as critical, linearly decay health score
     const errorPenalty = Math.min(errorCount * 10, 60);
     const healthScore = Math.max(0, 100 - errorPenalty);
 
-    // Simple uptime proxy: no crashes → 100%, each crash costs 5%
     const crashCount = errorCount > 5 ? Math.floor(errorCount / 5) : 0;
     const uptimePercent = Math.max(0, 100 - crashCount * 5);
 
@@ -230,19 +261,18 @@ class MetricsService {
   }
 
   private collectPerformance(): PerformanceMetrics {
-    // Hermes performance API
     let usedHeapBytes = 0;
     let heapSizeBytes = 0;
 
     try {
-      // @ts-ignore — Hermes-specific API
+      // @ts-ignore — Hermes‑specific API
       const memInfo = performance?.memory;
       if (memInfo) {
         usedHeapBytes = memInfo.usedJSHeapSize ?? 0;
         heapSizeBytes = memInfo.jsHeapSizeLimit ?? 0;
       }
     } catch {
-      // Non-Hermes engine — leave as 0
+      // Non‑Hermes engine — leave as 0
     }
 
     const heapUtilPercent =
@@ -251,7 +281,8 @@ class MetricsService {
     const avgApiResponseMs =
       this.apiResponseTimes.length > 0
         ? Math.round(
-            this.apiResponseTimes.reduce((a, b) => a + b, 0) / this.apiResponseTimes.length
+            this.apiResponseTimes.reduce((a, b) => a + b, 0) /
+              this.apiResponseTimes.length,
           )
         : 0;
 
@@ -266,7 +297,6 @@ class MetricsService {
   }
 
   private collectErrorRate(now: number): ErrorRateMetrics {
-    // Rolling 1-minute window
     const oneMinuteAgo = now - 60_000;
     const recentErrors = this.errorTimestamps.filter((t) => t >= oneMinuteAgo);
     const errorsPerMinute = recentErrors.length;
@@ -277,16 +307,14 @@ class MetricsService {
     const byCategory = Object.entries(this.errorCategories).map(([category, count]) => ({
       category,
       count,
-      percent:
-        totalCategorised > 0 ? Math.round((count / totalCategorised) * 100) : 0,
+      percent: totalCategorised > 0 ? Math.round((count / totalCategorised) * 100) : 0,
     }));
 
-    // Trend: compare last 30s vs previous 30s
     const thirtySecondsAgo = now - 30_000;
     const sixtySecondsAgo = now - 60_000;
     const recent30s = this.errorTimestamps.filter((t) => t >= thirtySecondsAgo).length;
     const previous30s = this.errorTimestamps.filter(
-      (t) => t >= sixtySecondsAgo && t < thirtySecondsAgo
+      (t) => t >= sixtySecondsAgo && t < thirtySecondsAgo,
     ).length;
 
     let trend: ErrorRateMetrics['trend'] = 'stable';
@@ -300,7 +328,7 @@ class MetricsService {
     const sessionDurationSec = Math.round((now - this.sessionStartTs) / 1000);
 
     return {
-      activeSessions: 1, // on-device: always 1; replace with server-side count
+      activeSessions: 1, // on‑device: always 1; replace with server‑side count
       screensViewed: this.screensViewedCount,
       eventsTracked: this.eventsTrackedCount,
       avgSessionDurationSec: sessionDurationSec,
@@ -312,7 +340,7 @@ class MetricsService {
     health: AppHealthMetrics,
     perf: PerformanceMetrics,
     errors: ErrorRateMetrics,
-    thresholds: AlertThresholds = DEFAULT_THRESHOLDS
+    thresholds: AlertThresholds = DEFAULT_THRESHOLDS,
   ): DashboardAlert[] {
     const alerts: DashboardAlert[] = [];
     const now = Date.now();
@@ -347,10 +375,7 @@ class MetricsService {
       });
     }
 
-    if (
-      perf.avgApiResponseMs > 0 &&
-      perf.avgApiResponseMs > thresholds.maxAvgApiResponseMs
-    ) {
+    if (perf.avgApiResponseMs > 0 && perf.avgApiResponseMs > thresholds.maxAvgApiResponseMs) {
       alerts.push({
         id: 'api_slow',
         severity: 'warning',

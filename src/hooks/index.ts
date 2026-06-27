@@ -54,3 +54,6 @@ export type { UseSearchIndexResult } from './useSearchIndex';
 export { useAppUpdate } from './useAppUpdate';
 export type { UseAppUpdateResult, UseAppUpdateState, UseAppUpdateActions } from './useAppUpdate';
 
+// Intersection Observer / visibility hooks
+export * from './useIntersectionObserver';
+export * from './useViewabilityCallback';

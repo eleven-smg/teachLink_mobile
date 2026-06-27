@@ -46,6 +46,15 @@ export const DownloadQueue = () => {
     [removeDownload, scale]
   );
 
+  const getDownloadItemLayout = useCallback(
+    (_data: ArrayLike<any> | null | undefined, index: number) => ({
+      length: DOWNLOAD_ITEM_HEIGHT,
+      offset: DOWNLOAD_ITEM_HEIGHT * index,
+      index,
+    }),
+    []
+  );
+
   if (tasks.length === 0) {
     return (
       <View className="flex-1 items-center justify-center p-8">

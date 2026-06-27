@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { SearchResultItem } from '../components/mobile/SearchResultCard';
 import { FilterValues } from '../components/mobile/FilterSheet';
+import { SearchResultItem } from '../components/mobile/SearchResultCard';
 import { Course } from '../types/course';
-import { buildTrie, Trie } from '../utils/trie';
 import { appLogger } from '../utils/logger';
+import { buildTrie, Trie } from '../utils/trie';
 
 const INDEX_STORAGE_KEY = '@teachlink_search_index';
 // Bump this when the index schema changes to force a rebuild on existing installs.
@@ -20,12 +20,64 @@ const FIELD_WEIGHTS = {
 } as const;
 
 const STOP_WORDS = new Set([
-  'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-  'of', 'with', 'by', 'from', 'is', 'are', 'was', 'be', 'been', 'being',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-  'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those',
-  'it', 'its', 'you', 'your', 'we', 'our', 'they', 'their', 'he', 'she',
-  'as', 'if', 'not', 'no', 'so', 'up', 'out', 'about', 'more', 'also',
+  'a',
+  'an',
+  'the',
+  'and',
+  'or',
+  'but',
+  'in',
+  'on',
+  'at',
+  'to',
+  'for',
+  'of',
+  'with',
+  'by',
+  'from',
+  'is',
+  'are',
+  'was',
+  'be',
+  'been',
+  'being',
+  'have',
+  'has',
+  'had',
+  'do',
+  'does',
+  'did',
+  'will',
+  'would',
+  'could',
+  'should',
+  'may',
+  'might',
+  'can',
+  'this',
+  'that',
+  'these',
+  'those',
+  'it',
+  'its',
+  'you',
+  'your',
+  'we',
+  'our',
+  'they',
+  'their',
+  'he',
+  'she',
+  'as',
+  'if',
+  'not',
+  'no',
+  'so',
+  'up',
+  'out',
+  'about',
+  'more',
+  'also',
 ]);
 
 interface IndexEntry {
@@ -62,7 +114,7 @@ function addEntry(
   entries: Record<string, IndexEntry[]>,
   token: string,
   docId: string,
-  score: number,
+  score: number
 ): void {
   const list = (entries[token] ??= []);
   const existing = list.find(e => e.docId === docId);
@@ -70,6 +122,24 @@ function addEntry(
     existing.score += score;
   } else {
     list.push({ docId, score });
+  }
+}
+
+function addWeightedTokens(
+  entries: Record<string, IndexEntry[]>,
+  tokens: string[],
+  docId: string,
+  weight: number
+): void {
+  if (tokens.length === 0) return;
+
+  const counts = new Map<string, number>();
+  for (const token of tokens) {
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+
+  for (const [token, count] of counts) {
+    addEntry(entries, token, docId, weight * (count / tokens.length));
   }
 }
 
@@ -85,7 +155,7 @@ function courseToDoc(course: Course): SearchResultItem {
   };
 }
 
-function buildIndex(courses: Course[]): PersistedSearchIndex {
+export function buildSearchIndex(courses: Course[]): PersistedSearchIndex {
   const entries: Record<string, IndexEntry[]> = {};
   const docs: Record<string, SearchResultItem> = {};
   const suggestionSet = new Set<string>();
@@ -102,10 +172,7 @@ function buildIndex(courses: Course[]): PersistedSearchIndex {
 
     // Title
     const titleTokens = tokenize(course.title);
-    for (const token of titleTokens) {
-      const tf = titleTokens.filter(t => t === token).length / titleTokens.length;
-      addEntry(entries, token, course.id, FIELD_WEIGHTS.title * tf);
-    }
+    addWeightedTokens(entries, titleTokens, course.id, FIELD_WEIGHTS.title);
 
     // Category
     for (const token of tokenize(course.category)) {
@@ -119,10 +186,7 @@ function buildIndex(courses: Course[]): PersistedSearchIndex {
 
     // Description (length-capped)
     const descTokens = tokenize(course.description, MAX_DESC_TOKENS);
-    for (const token of descTokens) {
-      const tf = descTokens.filter(t => t === token).length / descTokens.length;
-      addEntry(entries, token, course.id, FIELD_WEIGHTS.description * tf);
-    }
+    addWeightedTokens(entries, descTokens, course.id, FIELD_WEIGHTS.description);
   }
 
   // Pre-sort each posting list by score descending so top hits come first.
@@ -142,7 +206,7 @@ function buildIndex(courses: Course[]): PersistedSearchIndex {
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
-class SearchIndexService {
+export class SearchIndexService {
   private index: PersistedSearchIndex | null = null;
   // Trie over the index vocabulary (token strings) for fast prefix lookup.
   private tokenTrie: Trie | null = null;
@@ -187,10 +251,10 @@ class SearchIndexService {
    */
   async buildFromCourses(courses: Course[]): Promise<void> {
     const start = Date.now();
-    const idx = buildIndex(courses);
+    const idx = buildSearchIndex(courses);
     this._mount(idx);
     appLogger.infoSync(
-      `[SearchIndex] built ${idx.courseIds.length} docs in ${Date.now() - start}ms`,
+      `[SearchIndex] built ${idx.courseIds.length} docs in ${Date.now() - start}ms`
     );
     await this._persist(idx);
   }
@@ -237,7 +301,7 @@ class SearchIndexService {
       }
     }
 
-    const results: Array<{ item: SearchResultItem; score: number }> = [];
+    const results: { item: SearchResultItem; score: number }[] = [];
 
     for (const [docId, matched] of matchedTokens) {
       // AND gate — every query token must be satisfied.

@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getCellularGenerationAsync, getNetworkStateAsync, NetworkStateType } from 'expo-network';
+import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { InteractionManager } from 'react-native';
 
@@ -19,10 +19,7 @@ const MAX_LIMIT = 10;
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Controls which network conditions allow prefetching */
-export type PrefetchAggressiveness =
-  | 'conservative' // WiFi only
-  | 'moderate' // WiFi or 4G+
-  | 'off'; // Never prefetch
+export type PrefetchAggressiveness = 'aggressive' | 'moderate' | 'conservative' | 'off';
 
 interface UsePrefetchImagesOptions {
   /** Whether to automatically prefetch on mount (via InteractionManager) */
@@ -57,62 +54,31 @@ interface UsePrefetchImagesReturn {
   recordHit: (url: string) => void;
 }
 
-// ─── Network gate ─────────────────────────────────────────────────────────────
-
 /**
- * Converts the network type field (which may be a string, number, or enum
- * depending on the expo-network version) to a normalised uppercase string so
- * comparisons are robust across mock and real environments.
+ * Calculates the effective aggressiveness level factoring in current real-world
+ * network parameters retrieved via NetInfo.
  */
-function normaliseType(type: unknown): string {
-  return (type ?? '').toString().toUpperCase();
-}
-
-async function networkAllowsPrefetch(
-  aggressiveness: PrefetchAggressiveness
-): Promise<{ allowed: boolean; reason?: string }> {
-  if (aggressiveness === 'off') {
-    return { allowed: false, reason: 'prefetch-disabled' };
+function determineEffectiveAggressiveness(
+  baseAggressiveness: PrefetchAggressiveness,
+  netState: NetInfoState | null
+): PrefetchAggressiveness {
+  if (baseAggressiveness === 'off' || !netState || !netState.isConnected) {
+    return 'off';
   }
 
-  try {
-    const state = await getNetworkStateAsync();
-
-    if (!state.isConnected) {
-      return { allowed: false, reason: 'offline' };
-    }
-
-    const typeStr = normaliseType(state.type);
-
-    // WiFi is always acceptable for both modes
-    if (typeStr === 'WIFI' || typeStr === String(NetworkStateType.WIFI)) {
-      return { allowed: true };
-    }
-
-    if (aggressiveness === 'conservative') {
-      return { allowed: false, reason: 'conservative:not-wifi' };
-    }
-
-    // moderate: also allow 4G / 5G cellular
-    const isCellular = typeStr === 'CELLULAR' || typeStr === String(NetworkStateType.CELLULAR);
-    if (isCellular) {
-      try {
-        const gen = await getCellularGenerationAsync();
-        const genStr = (gen ?? '').toString().toUpperCase().replace('CELLULAR_', '');
-        // Accept both 'CELLULAR_4G'→'4G' and plain '4G' or '4g'
-        if (genStr === '4G' || genStr === '5G') {
-          return { allowed: true };
-        }
-        return { allowed: false, reason: `moderate:below-4g(${genStr})` };
-      } catch {
-        return { allowed: false, reason: 'moderate:cellular-gen-unknown' };
-      }
-    }
-
-    return { allowed: false, reason: `moderate:type-${typeStr}` };
-  } catch {
-    return { allowed: false, reason: 'network-check-failed' };
+  if (
+    netState.details &&
+    'isConnectionExpensive' in netState.details &&
+    netState.details.isConnectionExpensive
+  ) {
+    return 'off';
   }
+
+  if (netState.type === 'cellular') {
+    return 'conservative';
+  }
+
+  return baseAggressiveness;
 }
 
 // ─── Hook ──────────────────────────────────────────────────────────────────────
@@ -122,18 +88,10 @@ async function networkAllowsPrefetch(
  *
  * Provides efficient image prefetching for performance optimization.
  * - Respects data saver, low battery, and memory pressure.
- * - Network-gated: only prefetches on WiFi (conservative) or WiFi+4G (moderate).
+ * - Dynamically updates on network changes using NetInfo.
+ * - Caps cellular prefetch to conservative. Disables on metered connections.
  * - Auto mode uses InteractionManager to avoid blocking animations.
  * - Tracks hit rate: call `recordHit(url)` whenever a prefetched image is rendered.
- *
- * @example
- * ```tsx
- * const { isPrefetching, hitRate, recordHit } = usePrefetchImages(thumbnailUrls, {
- *   auto: true,
- *   limit: 10,
- *   aggressiveness: 'moderate',
- * });
- * ```
  */
 export function usePrefetchImages(
   urls: (string | null | undefined)[],
@@ -157,15 +115,36 @@ export function usePrefetchImages(
   const [failedUrls, setFailedUrls] = useState<string[]>([]);
   const [storedAggressiveness, setStoredAggressiveness] =
     useState<PrefetchAggressiveness>(DEFAULT_AGGRESSIVENESS);
+  const [netState, setNetState] = useState<NetInfoState | null>(null);
 
   // Hit-rate tracking in refs (mutations must not trigger re-renders)
   const prefetchedRef = useRef<Set<string>>(new Set());
   const hitsRef = useRef(0);
   const [hitRate, setHitRate] = useState(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    NetInfo.fetch().then(setNetState);
+
+    const unsubscribe = NetInfo.addEventListener((state: any) => {
+      setNetState(state);
+
+      const currentAggressive = determineEffectiveAggressiveness(
+        aggressivenessProp ?? storedAggressiveness,
+        state
+      );
+      if (currentAggressive === 'off' && isPrefetching) {
+        abortControllerRef.current?.abort();
+      }
+    });
+
+    return unsubscribe;
+  }, [aggressivenessProp, storedAggressiveness, isPrefetching]);
 
   // ─── Effective settings ──────────────────────────────────────────────────────
 
-  const effectiveAggressiveness = aggressivenessProp ?? storedAggressiveness;
+  const baseAggressiveness = aggressivenessProp ?? storedAggressiveness;
+  const runtimeAggressiveness = determineEffectiveAggressiveness(baseAggressiveness, netState);
   const effectiveLimit = Math.min(limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
   // ─── Load stored aggressiveness preference on init ───────────────────────────
@@ -174,8 +153,8 @@ export function usePrefetchImages(
     if (aggressivenessProp !== undefined) return; // explicit prop wins
     AsyncStorage.getItem(PREFETCH_AGGRESSIVENESS_KEY)
       .then(value => {
-        if (value === 'conservative' || value === 'moderate' || value === 'off') {
-          setStoredAggressiveness(value);
+        if (value && ['conservative', 'moderate', 'aggressive', 'off'].includes(value)) {
+          setStoredAggressiveness(value as PrefetchAggressiveness);
         }
       })
       .catch(() => {});
@@ -197,24 +176,30 @@ export function usePrefetchImages(
         return [];
       }
 
-      const { allowed, reason } = await networkAllowsPrefetch(effectiveAggressiveness);
-      if (!allowed) {
-        appLogger.debugSync(`usePrefetchImages: skipped — network (${reason})`);
+      if (runtimeAggressiveness === 'off') {
+        appLogger.debugSync('usePrefetchImages: skipped — network logic (off or expensive)');
         return [];
       }
 
       const validUrls = (toFetch.filter(Boolean) as string[]).slice(0, effectiveLimit);
       if (validUrls.length === 0) return [];
 
+      abortControllerRef.current = new AbortController();
+
       try {
         setIsPrefetching(true);
 
         appLogger.debugSync('usePrefetchImages: prefetch start', {
           count: validUrls.length,
-          aggressiveness: effectiveAggressiveness,
+          aggressiveness: runtimeAggressiveness,
         });
 
         const results = await ImageCache.prefetchImages(validUrls);
+
+        if (abortControllerRef.current.signal.aborted) {
+          appLogger.debugSync('usePrefetchImages: aborted due to network downgrade');
+          return [];
+        }
 
         // Register which URLs we prefetched so recordHit can track them
         validUrls.forEach(url => prefetchedRef.current.add(url));
@@ -239,16 +224,15 @@ export function usePrefetchImages(
         setIsPrefetching(false);
       }
     },
-
-    [dataSaverEnabled, isLowBattery, effectiveAggressiveness, effectiveLimit, onComplete, onError]
+    [dataSaverEnabled, isLowBattery, runtimeAggressiveness, effectiveLimit, onComplete, onError]
   );
 
   // ─── Auto-prefetch via InteractionManager ────────────────────────────────────
 
   useEffect(() => {
     if (!auto) return;
-    if (dataSaverEnabled || isLowBattery) return;
-    if (memoryPressureService.isUnderPressure()) return;
+    if (dataSaverEnabled || isLowBattery || memoryPressureService.isUnderPressure()) return;
+    if (runtimeAggressiveness === 'off') return;
 
     const validUrls = (urls.filter(Boolean) as string[]).slice(0, effectiveLimit);
     if (validUrls.length === 0) return;
@@ -282,7 +266,7 @@ export function usePrefetchImages(
     auto,
     delay,
     effectiveLimit,
-    effectiveAggressiveness,
+    runtimeAggressiveness,
     prefetch,
     dataSaverEnabled,
     isLowBattery,

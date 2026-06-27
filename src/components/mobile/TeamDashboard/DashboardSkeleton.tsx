@@ -6,6 +6,8 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ShimmerItem as Skeleton } from '../../common/SkeletonLoader';
 
+import { Skeleton } from '../../ui/Skeleton';
+
 interface DashboardSkeletonProps {
   isDark?: boolean;
 }
