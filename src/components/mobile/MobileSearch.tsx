@@ -212,6 +212,13 @@ export const MobileSearch = ({
     setFilterSheetVisible(false);
   }, []);
 
+  const renderItem = useCallback(
+    ({ item }: { item: SearchResultItem }) => (
+      <SearchResultCard item={item} onPress={() => handleResultPress(item)} />
+    ),
+    [handleResultPress]
+  );
+
   const getSearchItemLayout = useCallback(
     (_data: SearchResultItem[] | null | undefined, index: number) => ({
       length: ITEM_HEIGHT,
@@ -298,9 +305,7 @@ export const MobileSearch = ({
           <FlatList<SearchResultItem>
             data={results}
             keyExtractor={(item: SearchResultItem) => item.id}
-            renderItem={({ item }: { item: SearchResultItem }) => (
-              <SearchResultCard item={item} onPress={() => handleResultPress(item)} />
-            )}
+            renderItem={renderItem}
             removeClippedSubviews
             contentContainerStyle={styles.resultsList}
             getItemLayout={getSearchItemLayout}

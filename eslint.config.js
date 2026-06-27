@@ -64,7 +64,7 @@ module.exports = defineConfig([
         },
       ],
       'react-hooks/rules-of-hooks': 'off',
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/exhaustive-deps': 'error',
       'import/no-unresolved': 'off',
 
       // Prevent inline component definitions that defeat memoization
