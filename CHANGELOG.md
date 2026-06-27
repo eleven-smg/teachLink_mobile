@@ -1,8 +1,9 @@
-# [1.10.0](https://github.com/rinafcode/teachLink_mobile/compare/v1.15.0...v1.10.0) (2026-06-27)
+# [1.11.0](https://github.com/rinafcode/teachLink_mobile/compare/v1.15.0...v1.11.0) (2026-06-27)
 
 
 ### Bug Fixes
 
+* **#594:** cap requestDeduplicator at 100 entries with 30s TTL eviction ([4a00abe](https://github.com/rinafcode/teachLink_mobile/commit/4a00abe0102fb13b03c5df93b54cd501c4ab87ca)), closes [#594](https://github.com/rinafcode/teachLink_mobile/issues/594)
 * **#599:** debounce useFormCache writes at 800ms, add flushCache and unmount cleanup ([4ed22d4](https://github.com/rinafcode/teachLink_mobile/commit/4ed22d4a1bd2df6588957e5c7fb304b13d0c5c2e)), closes [#599](https://github.com/rinafcode/teachLink_mobile/issues/599)
 * add build script for CI workflow ([a7d27fa](https://github.com/rinafcode/teachLink_mobile/commit/a7d27fa6245ab1595fa9d99a7ca7b8ea7d672a9a))
 * add environment variables to all CI workflows ([2967357](https://github.com/rinafcode/teachLink_mobile/commit/2967357d147ed2c2adb9b62ad36d2613972f28fc))
