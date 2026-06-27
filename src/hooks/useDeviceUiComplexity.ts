@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import { useEffect, useMemo } from 'react';
 
 import { mobileAnalyticsService } from '../services/mobileAnalytics';
+import { useDeviceStore } from '../store/deviceStore';
 import { AnalyticsEvent } from '../utils/trackingEvents';
 
 export type UiComplexityLevel = 'low' | 'mid' | 'high';
@@ -91,6 +92,7 @@ export function useDeviceUiComplexity(): DeviceUiComplexityConfig {
   const isBatterySaverEnabled = useLowPowerMode();
   const deviceYearClass = Device.deviceYearClass;
   const totalMemoryBytes = Device.totalMemory;
+  const isInBackground = useDeviceStore(state => state.isInBackground);
 
   const config = useMemo(() => {
     const classified = classifyDeviceLevel({
@@ -98,6 +100,23 @@ export function useDeviceUiComplexity(): DeviceUiComplexityConfig {
       totalMemoryBytes,
       isBatterySaverEnabled,
     });
+
+    // If the app is backgrounded, force the lowest complexity to effectively
+    // pause animations and disable heavy visual effects while the app isn't visible.
+    if (isInBackground) {
+      return {
+        complexityLevel: 'low',
+        isLowEndDevice: classified.isLowEndDevice,
+        shouldReduceAnimations: true,
+        shouldDisableHeavyEffects: true,
+        animationTargetFPS: 30,
+        animationDurationMultiplier: 2,
+        isBatterySaverEnabled,
+        frameIntervalMs: 1000 / 30,
+        deviceYearClass,
+        totalMemoryBytes,
+      } as DeviceUiComplexityConfig;
+    }
     return {
       ...classified,
       isBatterySaverEnabled,
@@ -105,7 +124,7 @@ export function useDeviceUiComplexity(): DeviceUiComplexityConfig {
       deviceYearClass,
       totalMemoryBytes,
     };
-  }, [deviceYearClass, totalMemoryBytes, isBatterySaverEnabled]);
+  }, [deviceYearClass, totalMemoryBytes, isBatterySaverEnabled, isInBackground]);
 
   useEffect(() => {
     mobileAnalyticsService.trackEvent(AnalyticsEvent.DEVICE_COMPLEXITY_ASSIGNED, {

@@ -56,8 +56,8 @@ export type MobileVideoPlayerProps = {
   onPlaybackStatusUpdate?: (status: AVPlaybackStatus) => void;
   /** Callback when video quality changes */
   onQualityChange?: (qualityId: string) => void;
-  /** Pass true when the connection is known to be slow (2G / slow-3G) */
-  isSlowConnection?: boolean;
+  /** Whether the player is currently active (on-screen) */
+  isActive?: boolean;
 };
 
 const MobileVideoPlayer = ({
@@ -72,7 +72,7 @@ const MobileVideoPlayer = ({
   onError,
   onPlaybackStatusUpdate,
   onQualityChange,
-  isSlowConnection,
+  isActive = true,
 }: MobileVideoPlayerProps) => {
   const videoRef = useRef<Video | null>(null);
   const autoPlayHandledRef = useRef(false);
@@ -185,6 +185,12 @@ const MobileVideoPlayer = ({
   useEffect(() => {
     errorRef.current = error;
   }, [error]);
+
+  useEffect(() => {
+    if (!isActive) {
+      videoRef.current?.pauseAsync().catch(() => {});
+    }
+  }, [isActive]);
 
   const handleOverlayPress = useCallback(() => {
     setControlsVisible(true);
@@ -468,7 +474,9 @@ const MobileVideoPlayer = ({
             source={videoSource}
             resizeMode={ResizeMode.CONTAIN}
             posterSource={posterUri ? { uri: posterUri } : undefined}
-            usePoster={!!posterUri}
+            usePoster={!isActive ? true : !!posterUri}
+            preload={isActive ? 'auto' : 'none'}
+            shouldPlay={!isActive ? false : undefined}
             onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
             onLoadStart={() => setIsLoading(true)}
             onReadyForDisplay={event => {

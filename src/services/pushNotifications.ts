@@ -2,10 +2,11 @@ import Constants from 'expo-constants';
 import { isDevice } from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+
+import { featureCapabilities, FeatureStatus, FeatureType } from './featureCapabilities';
 import { useDegradationStore } from '../store/degradationStore';
 import { NotificationData, NotificationType } from '../types/notifications';
 import logger from '../utils/logger';
-import { featureCapabilities, FeatureStatus, FeatureType } from './featureCapabilities';
 
 // Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -235,7 +236,12 @@ export async function unregisterTokenFromBackend(token: string): Promise<boolean
 }
 
 /**
- * Schedule a local notification (useful for testing and reminders)
+ * Schedule a local notification (useful for testing and reminders).
+ *
+ * The `data` argument is validated and sanitised through
+ * `validateNotificationPayload` before being embedded in the notification
+ * content, preventing prototype-pollution vectors from reaching the
+ * notification subsystem.
  */
 export async function scheduleLocalNotification(
   title: string,
@@ -243,13 +249,18 @@ export async function scheduleLocalNotification(
   data: NotificationData,
   trigger?: Notifications.NotificationTriggerInput
 ): Promise<string> {
-  const channelId = getChannelId(data.type);
+  const safeData = validateNotificationPayload(data);
+  if (!safeData) {
+    throw new Error('scheduleLocalNotification: invalid or unsafe notification payload');
+  }
+
+  const channelId = getChannelId(safeData.type);
 
   return await Notifications.scheduleNotificationAsync({
     content: {
       title,
       body,
-      data: data as unknown as Record<string, unknown>,
+      data: safeData as unknown as Record<string, unknown>,
       sound: true,
       ...(Platform.OS === 'android' && { channelId }),
     },

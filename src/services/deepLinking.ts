@@ -1,10 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Sentry from '@sentry/react-native';
 import * as Linking from 'expo-linking';
 
-import { useDeepLinkStore } from '../store/deepLinkStore';
 import { ParsedDeepLink, parseDeepLinkUrl } from '../utils/linkParser';
-import { appLogger } from '../utils/logger';
+import logger from '../utils/logger';
 
 const DEFERRED_DEEP_LINK_KEY = '@teachlink:deferredDeepLink';
 

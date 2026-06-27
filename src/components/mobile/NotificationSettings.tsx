@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import React, { useState } from 'react';
+import React, { memo, useState } from 'react';
 import {
     ScrollView,
     Switch,
@@ -7,6 +7,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+
 import { useNotificationPermission } from '../../hooks';
 import { useNotificationStore } from '../../store/notificationStore';
 import { NotificationPreferences } from '../../types/notifications';
@@ -21,7 +22,7 @@ interface SettingRowProps {
   disabled?: boolean;
 }
 
-function SettingRow({
+const SettingRow = memo(function SettingRow({
   icon,
   title,
   description,
@@ -48,9 +49,9 @@ function SettingRow({
       />
     </View>
   );
-}
+});
 
-export function NotificationSettings() {
+export const NotificationSettings = () => {
   const { permissionStatus, requestPermission, openSettings, isLoading } =
     useNotificationPermission();
   const { preferences, setPreference, pushToken } = useNotificationStore();
