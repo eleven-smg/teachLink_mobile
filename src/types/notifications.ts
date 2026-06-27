@@ -28,6 +28,7 @@ export interface NotificationData {
   achievementId?: string;
   postId?: string;
   deepLink?: string;
+  screenName?: string;
 }
 
 export interface StoredNotification {
