@@ -39,7 +39,7 @@ import {
 } from './src/services/pushNotifications';
 import { requestQueue } from './src/services/requestQueue';
 import { searchIndexService } from './src/services/searchIndex';
-import { initializeSecureStorage } from './src/services/secureStorage';
+import { checkSessionValidity, initializeSecureStorage } from './src/services/secureStorage';
 import socketService from './src/services/socket';
 import { syncService } from './src/services/syncService'; // Fixed naming convention from the merge conflict
 import { useAppStore, useDeviceStore, useNotificationStore } from './src/store'; // Added missing store imports
@@ -220,8 +220,6 @@ const App = () => {
     prepareApp();
   }, []);
 
-  const SESSION_REFRESH_WINDOW_MS = 5 * 60 * 1000;
-
   useEffect(() => {
     // ===== CRITICAL PATH — runs immediately =====
     // These tasks are essential for core app functionality and must complete
@@ -394,30 +392,24 @@ const App = () => {
       const {
         isAuthenticated,
         refreshToken,
-        sessionExpiresAt,
         setUser,
         setTokens,
         setSessionExpiringSoon,
         logout,
       } = useAppStore.getState();
 
-      if (!isAuthenticated || !refreshToken || !sessionExpiresAt) {
-        return;
-      }
+      if (!isAuthenticated || !refreshToken) return;
 
-      const now = Date.now();
-      const msUntilExpiry = sessionExpiresAt - now;
+      const { valid, expiringSoon } = await checkSessionValidity();
 
-      if (msUntilExpiry <= 0) {
+      if (!valid) {
         logout();
         Alert.alert('Session expired', 'Your session has expired. Please log in again.');
         return;
       }
 
-      if (msUntilExpiry <= SESSION_REFRESH_WINDOW_MS) {
+      if (expiringSoon) {
         setSessionExpiringSoon(true);
-        Alert.alert('Session expiring soon', 'Refreshing your session to keep you signed in.');
-
         try {
           const refreshedSession = await mobileAuthService.refreshSession();
           setUser(refreshedSession.user);
@@ -459,7 +451,7 @@ const App = () => {
     return () => {
       appStateSubscription.remove();
     };
-  }, [SESSION_REFRESH_WINDOW_MS]);
+  }, []);
 
   if (!appIsReady) {
     return null;
