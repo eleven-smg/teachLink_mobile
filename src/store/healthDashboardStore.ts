@@ -92,12 +92,16 @@ export const useHealthDashboardStore = create<HealthDashboardState>()(
             } else {
               const diff = shallowDiff(state.snapshot, snapshot);
               if (!diff) {
-                if (serviceStatuses && serviceStatuses.length > 0) applyDegradationFlags(serviceStatuses);
+                if (serviceStatuses && serviceStatuses.length > 0) {
+                  applyDegradationFlags(serviceStatuses);
+                }
                 return state;
               }
               nextSnapshot = { ...state.snapshot, ...diff } as HealthSnapshot;
             }
-            if (serviceStatuses && serviceStatuses.length > 0) applyDegradationFlags(serviceStatuses);
+            if (serviceStatuses && serviceStatuses.length > 0) {
+              applyDegradationFlags(serviceStatuses);
+            }
             return {
               snapshot: nextSnapshot,
               lastUpdated: Date.now(),
@@ -122,17 +126,35 @@ export const useHealthDashboardStore = create<HealthDashboardState>()(
         ),
 
       setStatus: status => set({ status }, false, 'setStatus'),
+
       setLastChecked: () => set({ lastChecked: Date.now() }, false, 'setLastChecked'),
-      setLastNetworkCheck: () => set({ lastNetworkCheck: Date.now(), lastChecked: Date.now() }, false, 'setLastNetworkCheck'),
-      setRefreshInterval: refreshIntervalMs => set({ refreshIntervalMs }, false, 'setRefreshInterval'),
-      toggleAutoRefresh: () => set(state => ({ isAutoRefresh: !state.isAutoRefresh }), false, 'toggleAutoRefresh'),
+
+      setLastNetworkCheck: () =>
+        set(
+          { lastNetworkCheck: Date.now(), lastChecked: Date.now() },
+          false,
+          'setLastNetworkCheck'
+        ),
+
+      setRefreshInterval: refreshIntervalMs =>
+        set({ refreshIntervalMs }, false, 'setRefreshInterval'),
+
+      toggleAutoRefresh: () =>
+        set(state => ({ isAutoRefresh: !state.isAutoRefresh }), false, 'toggleAutoRefresh'),
+
       dismissAlert: id =>
         set(
-          state => { const next = new Set(state.dismissedAlertIds); next.add(id); return { dismissedAlertIds: next }; },
+          state => {
+            const next = new Set(state.dismissedAlertIds);
+            next.add(id);
+            return { dismissedAlertIds: next };
+          },
           false,
           'dismissAlert'
         ),
+
       clearDismissed: () => set({ dismissedAlertIds: new Set() }, false, 'clearDismissed'),
+
       reset: () => set({ ...initialState, dismissedAlertIds: new Set() }, false, 'reset'),
     }),
     { name: 'HealthDashboardStore' }
@@ -142,7 +164,9 @@ export const useHealthDashboardStore = create<HealthDashboardState>()(
 export const selectVisibleAlerts = (state: HealthDashboardState): MetricAlert[] =>
   state.alerts.filter(a => !state.dismissedAlertIds.has(a.id));
 
-export const selectOverallStatus = (state: HealthDashboardState): 'ok' | 'warning' | 'critical' => {
+export const selectOverallStatus = (
+  state: HealthDashboardState
+): 'ok' | 'warning' | 'critical' => {
   const visible = selectVisibleAlerts(state);
   if (visible.some(a => a.severity === 'critical')) return 'critical';
   if (visible.some(a => a.severity === 'warning')) return 'warning';
