@@ -36,3 +36,14 @@ npm run format:check
 
 # Run TypeScript type check
 npx tsc --noEmit
+```
+
+## E2E Testing with Maestro
+
+We use [Maestro](https://maestro.mobile.dev/) for End-to-End (E2E) testing. The test flows are located in the `maestro/` directory.
+
+To run the tests locally:
+
+1.  Install Maestro: `curl -Ls "https://get.maestro.mobile.dev" | bash`
+2.  Start your app in a simulator or on a device.
+3.  Run the tests: `maestro test maestro/`
