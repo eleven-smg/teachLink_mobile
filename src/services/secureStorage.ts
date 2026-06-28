@@ -377,6 +377,34 @@ export async function clearAllAuthData(): Promise<void> {
 
 // ─── Session validity ─────────────────────────────────────────────────────────
 
+const SESSION_EXPIRY_SOON_MS = 5 * 60 * 1_000; // 5 minutes
+
+export interface SessionValidityResult {
+  valid: boolean;
+  expiringSoon: boolean;
+  msUntilExpiry: number;
+}
+
+/**
+ * Check if the user session is valid based on stored expiration time.
+ * Reads from SecureStore — use this as the authoritative source on foreground.
+ */
+export async function checkSessionValidity(): Promise<SessionValidityResult> {
+  const expiresAt = await getSessionExpiresAt();
+
+  if (!expiresAt) return { valid: false, expiringSoon: false, msUntilExpiry: 0 };
+
+  const msUntilExpiry = expiresAt - Date.now();
+
+  if (msUntilExpiry <= 0) return { valid: false, expiringSoon: false, msUntilExpiry };
+
+  return {
+    valid: true,
+    expiringSoon: msUntilExpiry < SESSION_EXPIRY_SOON_MS,
+    msUntilExpiry,
+  };
+}
+
 /**
  * Check if the user session is valid based on stored expiration time
  */

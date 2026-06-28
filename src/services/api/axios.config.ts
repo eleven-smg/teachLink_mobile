@@ -155,6 +155,19 @@ apiClient.interceptors.request.use(
       return config;
     }
 
+    // Hard-block any authenticated request when the session has already expired.
+    // The foreground check in App.tsx handles proactive refresh; this is the
+    // safety net for requests that slip through while the app is in use.
+    const { isAuthenticated, sessionExpiresAt } = useAppStore.getState();
+    if (isAuthenticated && sessionExpiresAt !== null && Date.now() >= sessionExpiresAt) {
+      useAppStore.getState().logout();
+      return Promise.reject({
+        message: 'Session expired. Please log in again.',
+        code: 'SESSION_EXPIRED',
+        status: 401,
+      });
+    }
+
     const token = await getAccessToken();
 
     if (token) {
