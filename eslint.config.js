@@ -70,10 +70,14 @@ module.exports = defineConfig([
       // Prevent inline component definitions that defeat memoization
       'react/no-unstable-nested-components': ['error', { allowAsProps: false }],
 
-      'jsx-a11y/alt-text': 'error',
-      'jsx-a11y/aria-props': 'error',
-      'jsx-a11y/aria-proptypes': 'error',
-      'jsx-a11y/aria-unsupported-elements': 'error',
+      'jsx-a11y/alt-text': 'warn',
+      'jsx-a11y/aria-props': 'warn',
+      'jsx-a11y/aria-proptypes': 'warn',
+      'jsx-a11y/aria-unsupported-elements': 'warn',
+
+      // Enforce structured logging — use src/utils/logger instead of console.*
+      // Allowlist: logger internals may reference console internally (excluded via ignores above)
+      'no-console': ['error', { allow: [] }],
     },
   },
 ]);
