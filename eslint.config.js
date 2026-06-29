@@ -68,7 +68,7 @@ module.exports = defineConfig([
       'import/no-unresolved': 'off',
 
       // Prevent inline component definitions that defeat memoization
-      'react/no-unstable-nested-components': ['warn', { allowAsProps: false }],
+      'react/no-unstable-nested-components': ['error', { allowAsProps: false }],
 
       'jsx-a11y/alt-text': 'warn',
       'jsx-a11y/aria-props': 'warn',
