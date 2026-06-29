@@ -1,4 +1,5 @@
-import * as Font from 'expo-font';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
@@ -11,13 +12,14 @@ import {
   Text,
   View,
 } from 'react-native';
+
 import StorybookUI from './.rnstorybook';
 import './global.css';
 import { ErrorBoundary } from './src/components/common/ErrorBoundary';
+import { NotificationPermissionExplanationSheet } from './src/components/mobile/NotificationPermissionExplanationSheet';
 import { initializeLogging } from './src/config/logging';
 import { AuthProvider, useAdaptiveTheme, useReviewMetrics } from './src/hooks';
 import AppNavigator from './src/navigation/AppNavigator';
-import { setupNotificationNavigation } from './src/navigation/linking';
 import {
   apiClient,
   getCacheStatus,
@@ -25,28 +27,34 @@ import {
   subscribeToCacheStatus,
 } from './src/services/api';
 import { warmCriticalCaches } from './src/services/cacheWarming';
-import { crashReportingService } from './src/services/cashReporting';
+import {
+  CRITICAL_FONTS,
+  fontService,
+  SECONDARY_FONTS,
+} from './src/services/fontService';
+import { crashReportingService } from './src/services/crashReporting';
 import { featureCapabilities } from './src/services/featureCapabilities';
 import { inAppReviewService } from './src/services/inAppReview';
 import { mobileAuthService } from './src/services/mobileAuth';
 import {
-  addNotificationReceivedListener,
-  getLastNotificationResponse,
   registerForPushNotifications, // Added missing native push helpers
   registerTokenWithBackend,
   removeNotificationListener,
 } from './src/services/pushNotifications';
 import { requestQueue } from './src/services/requestQueue';
-import { initializeSecureStorage } from './src/services/secureStorage'; // Added missing storage helper mock path
+import { searchIndexService } from './src/services/searchIndex';
+import { checkSessionValidity, initializeSecureStorage } from './src/services/secureStorage';
 import socketService from './src/services/socket';
 import { syncService } from './src/services/syncService'; // Fixed naming convention from the merge conflict
-import { useAppStore, useNotificationStore } from './src/store'; // Added missing store imports
+import { useAppStore, useDeviceStore, useNotificationStore } from './src/store'; // Added missing store imports
 import { useDegradationStore } from './src/store/degradationStore';
-import { searchIndexService } from './src/services/searchIndex';
+import {
+  consumeHydrationResetToast,
+  subscribeToHydrationResetToast,
+} from './src/store/persistence';
 import { handleCacheVersionUpdate } from './src/utils/cacheVersioning';
 import { requireEnvVariables } from './src/utils/env';
 import { appLogger } from './src/utils/logger';
-import { handleNotificationReceived } from './src/utils/notificationHandlers';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -59,7 +67,9 @@ requireEnvVariables();
 
 // Initialize centralized logging on app start
 initializeLogging().catch(err => {
-  console.error('[App] Failed to initialize logging:', err);
+  if (__DEV__) {
+    console.error('[App] Failed to initialize logging:', err);
+  }
 });
 
 if (__DEV__) {
@@ -117,6 +127,42 @@ const CacheRevalidationBanner = () => {
   );
 };
 
+const PreferencesResetToast = () => (
+  <View
+    style={{
+      position: 'absolute',
+      left: 16,
+      right: 16,
+      bottom: 32,
+      zIndex: 10000,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      backgroundColor: '#111827',
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      elevation: 6,
+    }}
+  >
+    <Text style={{ color: '#f9fafb', fontWeight: '600' }}>Your preferences were reset</Text>
+  </View>
+);
+
+let _compromisedAlertShown = false;
+
+function showCompromisedAlert(): void {
+  if (_compromisedAlertShown) return;
+  _compromisedAlertShown = true;
+  Alert.alert(
+    'Device Security Warning',
+    'Your device appears to be jailbroken or rooted. Sensitive features including biometric authentication and payments have been disabled to protect your account. Please use a secure device.',
+    [{ text: 'I Understand' }],
+    { cancelable: false }
+  );
+}
+
 const App = () => {
   const theme = useAppStore(state => state.theme);
   useAdaptiveTheme();
@@ -125,15 +171,40 @@ const App = () => {
 
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [appIsReady, setAppIsReady] = React.useState(false);
+  const [showPreferencesResetToast, setShowPreferencesResetToast] = useState(false);
+
+  useEffect(() => {
+    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const showToastIfNeeded = () => {
+      if (!consumeHydrationResetToast()) {
+        return;
+      }
+
+      setShowPreferencesResetToast(true);
+      hideTimer = setTimeout(() => {
+        setShowPreferencesResetToast(false);
+      }, 4000);
+    };
+
+    showToastIfNeeded();
+    const unsubscribe = subscribeToHydrationResetToast(showToastIfNeeded);
+
+    return () => {
+      unsubscribe();
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     async function prepareApp() {
       try {
-        // 1. Load fonts
-        await Font.loadAsync({
-          'Inter-Regular': require('./assets/fonts/Inter-Regular.ttf'),
-          'Inter-Bold': require('./assets/fonts/Inter-Bold.ttf'),
-        });
+        // 1. Load critical fonts (used on first screen) synchronously before splash hides
+        const fontStart = Date.now();
+        await fontService.loadFonts(CRITICAL_FONTS);
+        console.log(`[App] Critical fonts loaded in ${Date.now() - fontStart}ms`);
 
         // 2. Version-based cache invalidation: clear stale caches on app/data version bump
         const appVersion = require('./package.json').version as string;
@@ -142,7 +213,7 @@ const App = () => {
         // 3. Warm critical API caches before first render.
         await warmCriticalCaches();
       } catch (e) {
-        console.warn('Error during app initialization:', e);
+        appLogger.warnSync('Error during app initialization', { error: String(e) });
       } finally {
         setAppIsReady(true);
         await SplashScreen.hideAsync();
@@ -152,7 +223,15 @@ const App = () => {
     prepareApp();
   }, []);
 
-  const SESSION_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+  useEffect(() => {
+    if (!appIsReady) return;
+
+    InteractionManager.runAfterInteractions(async () => {
+      const start = Date.now();
+      await fontService.loadFonts(SECONDARY_FONTS);
+      console.log(`[App] Secondary fonts loaded in ${Date.now() - start}ms`);
+    });
+  }, [appIsReady]);
 
   useEffect(() => {
     // ===== CRITICAL PATH — runs immediately =====
@@ -162,9 +241,21 @@ const App = () => {
     // Initialize crash reporting at app startup
     crashReportingService.init();
 
+    // Run jailbreak/root detection on app launch
+    useDeviceStore
+      .getState()
+      .runDeviceCompromisedCheck()
+      .then(compromised => {
+        if (compromised) {
+          showCompromisedAlert();
+        }
+      });
+
     // Initialize secure storage (Keychain/Keystore) for encrypted token storage
     initializeSecureStorage().catch(error => {
-      appLogger.errorSync('Failed to initialize secure storage:', error); // Fixed 'logger.error' to 'appLogger.errorSync'
+      appLogger.errorSync('Failed to initialize secure storage:', error);
+      // Continue app startup even if secure storage init fails
+      // (user will be prompted to re-authenticate if needed)
     });
 
     // Add global handler for unhandled promise rejections
@@ -207,15 +298,7 @@ const App = () => {
         );
       });
 
-    // Initialize push notifications: request permissions and get device token
-    registerForPushNotifications().then(async token => {
-      if (token) {
-        const { setPushToken, setTokenRegistered } = useNotificationStore.getState();
-        setPushToken(token);
-        const registered = await registerTokenWithBackend(token);
-        setTokenRegistered(registered);
-      }
-    });
+    // Push notifications are now initialized within InteractionManager.runAfterInteractions below
 
     // ===== DEFERRED PATH — runs after user interactions complete =====
     // These tasks are non-critical: they enhance the experience but are not
@@ -248,15 +331,47 @@ const App = () => {
           );
         });
 
-      // Push notification registration (permission dialog + network)
-      registerForPushNotifications().then(async token => {
-        if (token) {
-          const { setPushToken, setTokenRegistered } = useNotificationStore.getState();
-          setPushToken(token);
-          const registered = await registerTokenWithBackend(token);
-          setTokenRegistered(registered);
+      // Push notification registration and explainer logic
+      const checkAndRegisterNotifications = async () => {
+        const { status } = await Notifications.getPermissionsAsync();
+        
+        if (status === 'granted') {
+          // Already granted, silently get token
+          const token = await registerForPushNotifications(false);
+          if (token) {
+            const { setPushToken, setTokenRegistered } = useNotificationStore.getState();
+            setPushToken(token);
+            const registered = await registerTokenWithBackend(token);
+            setTokenRegistered(registered);
+          }
+          return;
         }
-      });
+
+        // Check explainer status
+        const hasSeen = await AsyncStorage.getItem('hasSeenNotificationExplainer');
+        
+        if (hasSeen === 'true') {
+          // Explainer already seen and accepted, do not show sheet again
+          return;
+        }
+
+        if (hasSeen === null) {
+          // First launch
+          useNotificationStore.getState().setShowNotificationExplainer(true);
+        } else if (hasSeen === 'deferred') {
+          // Deferred users
+          const deferredCountStr = await AsyncStorage.getItem('appOpenCountSinceDeferral') || '0';
+          let deferredCount = parseInt(deferredCountStr, 10);
+          deferredCount += 1;
+          await AsyncStorage.setItem('appOpenCountSinceDeferral', deferredCount.toString());
+          
+          if (deferredCount >= 3) {
+            useNotificationStore.getState().setShowNotificationExplainer(true);
+          }
+        }
+      };
+
+      checkAndRegisterNotifications();
 
       // Request queue monitoring
       requestQueue.startMonitoring(apiClient);
@@ -290,30 +405,24 @@ const App = () => {
       const {
         isAuthenticated,
         refreshToken,
-        sessionExpiresAt,
         setUser,
         setTokens,
         setSessionExpiringSoon,
         logout,
       } = useAppStore.getState();
 
-      if (!isAuthenticated || !refreshToken || !sessionExpiresAt) {
-        return;
-      }
+      if (!isAuthenticated || !refreshToken) return;
 
-      const now = Date.now();
-      const msUntilExpiry = sessionExpiresAt - now;
+      const { valid, expiringSoon } = await checkSessionValidity();
 
-      if (msUntilExpiry <= 0) {
+      if (!valid) {
         logout();
         Alert.alert('Session expired', 'Your session has expired. Please log in again.');
         return;
       }
 
-      if (msUntilExpiry <= SESSION_REFRESH_WINDOW_MS) {
+      if (expiringSoon) {
         setSessionExpiringSoon(true);
-        Alert.alert('Session expiring soon', 'Refreshing your session to keep you signed in.');
-
         try {
           const refreshedSession = await mobileAuthService.refreshSession();
           setUser(refreshedSession.user);
@@ -333,7 +442,12 @@ const App = () => {
       }
     };
 
+    const checkCompromisedOnForeground = async () => {
+      await useDeviceStore.getState().runDeviceCompromisedCheck();
+    };
+
     checkSessionOnForeground();
+    checkCompromisedOnForeground();
 
     const appStateSubscription = AppState.addEventListener('change', nextAppState => {
       const wasInBackground = appStateRef.current.match(/inactive|background/);
@@ -341,6 +455,7 @@ const App = () => {
 
       if (wasInBackground && isForegrounded) {
         void checkSessionOnForeground();
+        void checkCompromisedOnForeground();
       }
 
       appStateRef.current = nextAppState;
@@ -349,7 +464,7 @@ const App = () => {
     return () => {
       appStateSubscription.remove();
     };
-  }, [SESSION_REFRESH_WINDOW_MS]);
+  }, []);
 
   if (!appIsReady) {
     return null;
@@ -360,7 +475,11 @@ const App = () => {
       <AuthProvider>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <CacheRevalidationBanner />
-        <AppNavigator />
+        <ScreenErrorBoundary screenName="AppNavigator">
+          <AppNavigator />
+        </ScreenErrorBoundary>
+        <NotificationPermissionExplanationSheet />
+        {showPreferencesResetToast ? <PreferencesResetToast /> : null}
       </AuthProvider>
     </ErrorBoundary>
   );

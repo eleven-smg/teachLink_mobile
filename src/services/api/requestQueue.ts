@@ -1,9 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { InternalAxiosRequestConfig } from 'axios';
 import * as Network from 'expo-network';
-import { healthMetricsService } from '../healthMetrics';
+
+import { useAppStore } from '../../store';
+import { logger } from '../../utils/logger';
 import { mobileAnalyticsService } from '../mobileAnalytics';
-import logger from '../../utils/logger';
+import { isSessionValid, refreshAccessToken } from '../secureStorage';
 
 export type RequestPriority = 'critical' | 'high' | 'normal' | 'low';
 
@@ -16,6 +18,14 @@ export interface QueuedRequest {
   priority: RequestPriority;
   endpoint: string;
   method: string;
+  /** Version of the entity when mutation was created (for conflict detection) */
+  lastKnownVersion?: number;
+  /** Timestamp when mutation was created on client (for last-write-wins resolution) */
+  clientTimestamp?: number;
+  /** Entity type for conflict resolution (e.g., 'note', 'quiz', 'profile') */
+  entityType?: string;
+  /** Entity ID for conflict resolution */
+  entityId?: string;
 }
 
 interface BatchGroup {
@@ -62,6 +72,11 @@ class RequestQueue {
   async addToQueue(
     config: InternalAxiosRequestConfig,
     priority: RequestPriority = 'normal',
+    versionMetadata?: {
+      lastKnownVersion?: number;
+      entityType?: string;
+      entityId?: string;
+    }
   ): Promise<string> {
     try {
       const queue = await this.getQueue();
@@ -77,6 +92,10 @@ class RequestQueue {
         priority,
         endpoint,
         method,
+        lastKnownVersion: versionMetadata?.lastKnownVersion,
+        clientTimestamp: Date.now(),
+        entityType: versionMetadata?.entityType,
+        entityId: versionMetadata?.entityId,
       };
 
       queue.push(queuedRequest);
@@ -88,9 +107,7 @@ class RequestQueue {
       this.metrics.byMethod[method] = (this.metrics.byMethod[method] ?? 0) + 1;
       await this.persistMetrics();
 
-      logger.info(
-        `Added request to queue: [${priority}] ${method} ${endpoint}`,
-      );
+      logger.info(`Added request to queue: [${priority}] ${method} ${endpoint}`);
       this.notifyListeners(queue.length);
 
       mobileAnalyticsService.trackEvent('request_queued' as any, {
@@ -120,18 +137,18 @@ class RequestQueue {
   async removeFromQueue(id: string): Promise<void> {
     try {
       const queue = await this.getQueue();
-      const removed = queue.find((req) => req.id === id);
-      const filtered = queue.filter((req) => req.id !== id);
+      const removed = queue.find(req => req.id === id);
+      const filtered = queue.filter(req => req.id !== id);
 
       if (removed) {
         this.metrics.totalQueued = Math.max(0, this.metrics.totalQueued - 1);
         this.metrics.byPriority[removed.priority] = Math.max(
           0,
-          this.metrics.byPriority[removed.priority] - 1,
+          this.metrics.byPriority[removed.priority] - 1
         );
         this.metrics.byMethod[removed.method] = Math.max(
           0,
-          (this.metrics.byMethod[removed.method] ?? 1) - 1,
+          (this.metrics.byMethod[removed.method] ?? 1) - 1
         );
       }
 
@@ -145,7 +162,7 @@ class RequestQueue {
   async incrementRetry(id: string): Promise<void> {
     try {
       const queue = await this.getQueue();
-      const request = queue.find((req) => req.id === id);
+      const request = queue.find(req => req.id === id);
       if (request) {
         request.retries += 1;
         this.metrics.totalRetries++;
@@ -154,6 +171,19 @@ class RequestQueue {
       }
     } catch (error) {
       logger.error('Error incrementing retry:', error);
+    }
+  }
+
+  async clear(): Promise<void> {
+    try {
+      await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify([]));
+      this.metrics.totalQueued = 0;
+      this.metrics.byPriority = { critical: 0, high: 0, normal: 0, low: 0 };
+      this.metrics.byMethod = {};
+      await this.persistMetrics();
+      this.notifyListeners(0);
+    } catch (error) {
+      logger.error('Error clearing request queue:', error);
     }
   }
 
@@ -172,17 +202,36 @@ class RequestQueue {
       const queue = await this.getQueue();
       if (queue.length === 0) return;
 
-      const validRequests = queue.filter(
-        (req) => req.retries < req.maxRetries,
-      );
-      const expiredRequests = queue.filter(
-        (req) => req.retries >= req.maxRetries,
-      );
+      const sessionValid = await isSessionValid();
+      if (!sessionValid) {
+        try {
+          const refreshedTokens = await refreshAccessToken();
+          useAppStore
+            .getState()
+            .setTokens(
+              refreshedTokens.accessToken,
+              refreshedTokens.refreshToken,
+              refreshedTokens.expiresAt
+            );
+          logger.info('RequestQueue: session refreshed before replaying queued requests');
+        } catch (error) {
+          await this.clear();
+          useAppStore.getState().logout();
+          logger.warn(
+            'RequestQueue: queued requests cleared after session refresh failed; re-authentication required',
+            error
+          );
+          return;
+        }
+      }
+
+      const validRequests = queue.filter(req => req.retries < req.maxRetries);
+      const expiredRequests = queue.filter(req => req.retries >= req.maxRetries);
 
       for (const expired of expiredRequests) {
         await this.removeFromQueue(expired.id);
         logger.warn(
-          `Request ${expired.id} [${expired.priority}] ${expired.method} ${expired.endpoint} dropped after ${expired.maxRetries} retries`,
+          `Request ${expired.id} [${expired.priority}] ${expired.method} ${expired.endpoint} dropped after ${expired.maxRetries} retries`
         );
       }
 
@@ -207,12 +256,10 @@ class RequestQueue {
     this.restoreMetrics();
     const pending = this.getQueue();
     pending
-      .then((q) => {
+      .then(q => {
         this.notifyListeners(q.length);
         if (q.length > 0) {
-          logger.info(
-            `RequestQueue: ${q.length} pending requests restored from storage`,
-          );
+          logger.info(`RequestQueue: ${q.length} pending requests restored from storage`);
           mobileAnalyticsService.trackEvent('queue_resumed' as any, {
             pendingCount: q.length,
           });
@@ -305,7 +352,7 @@ class RequestQueue {
   onPendingCountChange(listener: (count: number) => void): () => void {
     this.listeners.push(listener);
     return () => {
-      this.listeners = this.listeners.filter((l) => l !== listener);
+      this.listeners = this.listeners.filter(l => l !== listener);
     };
   }
 
@@ -337,7 +384,9 @@ class RequestQueue {
     if (requests.length === 1) {
       const req = requests[0];
       try {
-        await client(req.config);
+        // Add version metadata headers for conflict detection
+        const configWithVersion = this.addVersionHeaders(req);
+        await client(configWithVersion);
         await this.removeFromQueue(req.id);
         mobileAnalyticsService.trackEvent('request_dequeued' as any, {
           priority: req.priority,
@@ -345,19 +394,17 @@ class RequestQueue {
           endpoint: req.endpoint,
           batched: false,
         });
-      } catch (error) {
+      } catch {
         await this.incrementRetry(req.id);
       }
       return;
     }
 
-    logger.info(
-      `RequestQueue: Batching ${requests.length} ${method} requests to ${endpoint}`,
-    );
+    logger.info(`RequestQueue: Batching ${requests.length} ${method} requests to ${endpoint}`);
 
     if (method === 'GET') {
       const results = await Promise.allSettled(
-        requests.map((req) => client(req.config).catch(() => {})),
+        requests.map(req => client(req.config).catch(() => {}))
       );
       for (let i = 0; i < requests.length; i++) {
         if (results[i].status === 'fulfilled') {
@@ -370,7 +417,7 @@ class RequestQueue {
     }
 
     if (method === 'PUT' || method === 'PATCH') {
-      const payloads = requests.map((req) => req.config.data);
+      const payloads = requests.map(req => req.config.data);
       try {
         const mergedPayload = this.mergePayloads(payloads);
         const batchConfig = {
@@ -389,7 +436,7 @@ class RequestQueue {
           batchSize: requests.length,
         });
         return;
-      } catch (error) {
+      } catch {
         for (const req of requests) {
           await this.incrementRetry(req.id);
         }
@@ -401,7 +448,7 @@ class RequestQueue {
       try {
         await client(req.config);
         await this.removeFromQueue(req.id);
-      } catch (error) {
+      } catch {
         await this.incrementRetry(req.id);
       }
     }
@@ -429,7 +476,7 @@ class RequestQueue {
   }
 
   private notifyListeners(count: number): void {
-    this.listeners.forEach((listener) => listener(count));
+    this.listeners.forEach(listener => listener(count));
   }
 
   private async checkConnectivity(): Promise<boolean> {
@@ -443,9 +490,8 @@ class RequestQueue {
 
   private async listenForNetworkChanges(): Promise<void> {
     try {
-      const listener = Network.addNetworkStateListener((state) => {
-        const online =
-          (state.isConnected && state.isInternetReachable) ?? false;
+      const listener = Network.addNetworkStateListener(state => {
+        const online = (state.isConnected && state.isInternetReachable) ?? false;
         if (online) {
           logger.info('RequestQueue: Network became available, processing queue');
           void this.processQueue(this.apiClient!);
@@ -453,19 +499,13 @@ class RequestQueue {
       });
       this.networkListener = () => listener.remove();
     } catch (error) {
-      logger.error(
-        'RequestQueue: Failed to listen for network changes:',
-        error,
-      );
+      logger.error('RequestQueue: Failed to listen for network changes:', error);
     }
   }
 
   private async persistMetrics(): Promise<void> {
     try {
-      await AsyncStorage.setItem(
-        QUEUE_METRICS_KEY,
-        JSON.stringify(this.metrics),
-      );
+      await AsyncStorage.setItem(QUEUE_METRICS_KEY, JSON.stringify(this.metrics));
     } catch (error) {
       logger.error('Error persisting queue metrics:', error);
     }
@@ -484,6 +524,27 @@ class RequestQueue {
     } catch (error) {
       logger.error('Error restoring queue metrics:', error);
     }
+  }
+
+  private addVersionHeaders(request: QueuedRequest): InternalAxiosRequestConfig {
+    const config = { ...request.config };
+    config.headers = config.headers || {};
+
+    // Add version metadata as headers for conflict detection
+    if (request.lastKnownVersion !== undefined) {
+      config.headers['X-Last-Known-Version'] = String(request.lastKnownVersion);
+    }
+    if (request.clientTimestamp !== undefined) {
+      config.headers['X-Client-Timestamp'] = String(request.clientTimestamp);
+    }
+    if (request.entityType) {
+      config.headers['X-Entity-Type'] = request.entityType;
+    }
+    if (request.entityId) {
+      config.headers['X-Entity-Id'] = request.entityId;
+    }
+
+    return config;
   }
 
   private generateId(): string {

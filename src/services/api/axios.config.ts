@@ -12,18 +12,55 @@
 
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-import { invalidateCacheForBatchRequests, invalidateCacheForMutation } from './cache';
-import { buildSanitizedApiError } from './errorSanitization';
-import { requestQueue } from './requestQueue';
 import { getEnv } from '../../config';
+import { MUTATION_INVALIDATION_MAP } from '../../config/apiCacheConfig';
+import { SSL_PINNING } from '../../config/security';
+import { useAppStore } from '../../store';
+import { useConflictStore, type ConflictData } from '../../store/conflictStore';
 import { appLogger } from '../../utils/logger';
-import { startTiming, notifyEntry } from '../../utils/performanceTiming';
+import { notifyEntry, startTiming } from '../../utils/performanceTiming';
 import { healthMetricsService } from '../healthMetrics';
 import { getAccessToken, getRefreshToken, saveTokens } from '../secureStorage';
+import { sentryContextService } from '../sentryContext';
+import {
+  invalidateByPattern,
+  invalidateCacheForBatchRequests,
+  invalidateCacheForMutation,
+} from './cache';
+import { buildSanitizedApiError } from './errorSanitization';
+import { requestQueue } from './requestQueue';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Returns true when a network-layer error is consistent with an SSL certificate
+ * pin validation failure rather than a routine connectivity loss.
+ *
+ * Platform manifestations:
+ *   iOS  — NSURLErrorSecureConnectionFailed (-1200), NSURLErrorServerCertificateUntrusted (-1202)
+ *   Android — javax.net.ssl.SSLHandshakeException / SSLPeerUnverifiedException
+ *
+ * These surface in JavaScript as ERR_NETWORK / "Network Error" with SSL keywords
+ * in the underlying cause or message. We check both so a future RN version that
+ * exposes more detail is covered automatically.
+ */
+function isCertPinFailure(error: AxiosError): boolean {
+  if (SSL_PINNING.bypassEnabled) return false;
+  const msg = (error.message ?? '').toLowerCase();
+  const cause = String((error as unknown as { cause?: unknown }).cause ?? '').toLowerCase();
+  return (
+    msg.includes('ssl') ||
+    msg.includes('certificate') ||
+    msg.includes('tls') ||
+    cause.includes('sslhandshakeexception') ||
+    cause.includes('sslpeerunverifiedexception') ||
+    cause.includes('certificateexpired') ||
+    cause.includes('nsurlErrorSecureConnectionFailed'.toLowerCase()) ||
+    cause.includes('nsurlErrorServerCertificateUntrusted'.toLowerCase())
+  );
+}
 
 /**
  * Issue #225 — Exponential backoff with ±10 % jitter.
@@ -56,6 +93,16 @@ function invalidateSuccessfulMutationCache(config: InternalAxiosRequestConfig): 
     return;
   }
 
+  // Pattern-based invalidation from config map
+  for (const rule of MUTATION_INVALIDATION_MAP) {
+    if (rule.methods.includes(method) && rule.urlPattern.test(url)) {
+      for (const pattern of rule.invalidatePatterns) {
+        invalidateByPattern(pattern);
+      }
+      return;
+    }
+  }
+
   invalidateCacheForMutation(method, url);
 }
 
@@ -81,6 +128,8 @@ const apiClient = axios.create({
   },
 });
 
+export const UPLOAD_TIMEOUT_MS = 30_000;
+
 // ─── Refresh queue ─────────────────────────────────────────────────────────
 
 let isRefreshing = false;
@@ -99,12 +148,29 @@ function processRefreshQueue(token: string | null, error: unknown) {
 
 apiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig & { _requestStartMs?: number }) => {
+    const requestId = uuidv4();
+    config.headers['X-Request-ID'] = requestId;
+    pushLogContext({ requestId });
+
     // Stamp request start time for latency tracking
     config._requestStartMs = Date.now();
 
     // Skip adding token for refresh requests
     if (config.url?.includes('/auth/refresh')) {
       return config;
+    }
+
+    // Hard-block any authenticated request when the session has already expired.
+    // The foreground check in App.tsx handles proactive refresh; this is the
+    // safety net for requests that slip through while the app is in use.
+    const { isAuthenticated, sessionExpiresAt } = useAppStore.getState();
+    if (isAuthenticated && sessionExpiresAt !== null && Date.now() >= sessionExpiresAt) {
+      useAppStore.getState().logout();
+      return Promise.reject({
+        message: 'Session expired. Please log in again.',
+        code: 'SESSION_EXPIRED',
+        status: 401,
+      });
     }
 
     const token = await getAccessToken();
@@ -149,6 +215,18 @@ apiClient.interceptors.request.use(
 
 apiClient.interceptors.response.use(
   response => {
+    const sentRequestId = response.config.headers['X-Request-ID'];
+    const receivedRequestId = response.headers['x-request-id'];
+
+    if (sentRequestId && receivedRequestId && sentRequestId !== receivedRequestId) {
+      appLogger.warnSync('Request ID mismatch', {
+        sent: sentRequestId,
+        received: receivedRequestId,
+      });
+    }
+
+    popLogContext();
+
     // Record successful API call for health metrics
     const cfg = response.config as InternalAxiosRequestConfig & { _requestStartMs?: number };
     const durationMs = cfg._requestStartMs ? Date.now() - cfg._requestStartMs : 0;
@@ -159,9 +237,17 @@ apiClient.interceptors.response.use(
       statusCode: response.status,
     });
     invalidateSuccessfulMutationCache(cfg);
+
+    // Successful login clears the client-side lockout counter
+    if (cfg.url?.includes('/auth/login')) {
+      useAppStore.getState().resetAuthFailures();
+    }
+
     return response;
   },
   async (error: AxiosError) => {
+    popLogContext();
+
     const originalRequest = error.config as InternalAxiosRequestConfig & {
       _retry?: boolean;
       _retryCount?: number;
@@ -184,6 +270,12 @@ apiClient.interceptors.response.use(
     // ── Log non-network errors ────────────────────────────────────────────
     if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
       appLogger.warnSync('API not available (running in offline mode)');
+    } else if (error.code === 'ECONNABORTED') {
+      appLogger.warnSync('Request timed out', {
+        endpoint: originalRequest.url,
+        method: originalRequest.method,
+        timeout: originalRequest.timeout,
+      });
     } else if (error.response?.status !== 401) {
       appLogger.errorSync('API Error', error as Error, {
         status: error.response?.status,
@@ -200,6 +292,41 @@ apiClient.interceptors.response.use(
       originalRequest._timingFinish = undefined;
     }
 
+    // ── SSL pin failure — force logout, report to Sentry, surface clean error ─
+    //
+    // Platform-level pinning (NSPinnedDomains / network_security_config) raises
+    // SSL errors that reach JS as network-layer failures. Detect them before the
+    // general ERR_NETWORK retry path so we never silently retry a MITM'd request.
+    if (
+      (error.code === 'ERR_NETWORK' || error.message === 'Network Error') &&
+      isCertPinFailure(error)
+    ) {
+      // Report to Sentry — endpoint and method only; no token, headers, or body
+      sentryContextService.captureException(new Error('SSL certificate pin validation failed'), {
+        tags: { 'security.event': 'ssl_pin_failure' },
+        extra: {
+          endpoint: originalRequest?.url,
+          method: originalRequest?.method?.toUpperCase(),
+        },
+        fingerprint: ['ssl-pin-failure'],
+      });
+
+      appLogger.errorSync('SSL pin validation failed — possible MITM attack', undefined, {
+        endpoint: originalRequest?.url,
+        method: originalRequest?.method,
+      });
+
+      // Force full logout — session may be compromised
+      useAppStore.getState().logout();
+
+      return Promise.reject({
+        message:
+          'Secure connection could not be established. Please check your network and try again.',
+        code: 'SSL_PIN_FAILURE',
+        status: 0,
+      });
+    }
+
     // ── Queue network errors for retry ───────────────────────────────────
     if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
       if (originalRequest) {
@@ -211,6 +338,12 @@ apiClient.interceptors.response.use(
     const status = error.response?.status;
 
     // ─── 401: Token refresh flow ───────────────────────────────────────────
+
+    // Count consecutive bad-credential 401s on the login endpoint so the
+    // client can enforce a lockout before the 5th attempt reaches the server.
+    if (status === 401 && originalRequest.url?.includes('/auth/login') && !originalRequest._retry) {
+      useAppStore.getState().incrementAuthFailure();
+    }
 
     if (
       status === 401 &&
@@ -251,6 +384,11 @@ apiClient.interceptors.response.use(
 
         return apiClient(originalRequest);
       } catch (refreshError) {
+        // Three consecutive refresh 401s indicate the refresh token is invalid;
+        // force a full logout rather than leaving the user in a broken auth state.
+        if ((refreshError as AxiosError)?.response?.status === 401) {
+          useAppStore.getState().incrementRefreshFailure();
+        }
         processRefreshQueue(null, refreshError);
         return Promise.reject(refreshError);
       } finally {
@@ -269,6 +407,69 @@ apiClient.interceptors.response.use(
       return Promise.reject({
         message: 'You are not allowed to perform this action',
         status: 403,
+      });
+    }
+
+    // ─── 409: Conflict — offline mutation conflicts with server state ─────
+    //
+    // Server returns 409 when the client's lastKnownVersion is behind the
+    // server's current version. The response body contains:
+    // - serverVersion: the current server data
+    // - serverVersionNumber: the current version number
+    // - localVersion: echoed back from client headers (if provided)
+    // - entityType: type of entity (note, quiz, profile, etc.)
+    // - entityId: identifier of the conflicting entity
+
+    if (status === 409) {
+      const responseData = error.response?.data as
+        | {
+            serverVersion?: unknown;
+            serverVersionNumber?: number;
+            localVersion?: unknown;
+            entityType?: string;
+            entityId?: string;
+            message?: string;
+          }
+        | undefined;
+
+      // Extract version metadata from request headers
+      const clientVersionHeader = originalRequest.headers?.['X-Last-Known-Version'];
+      const clientTimestampHeader = originalRequest.headers?.['X-Client-Timestamp'];
+      const entityTypeHeader = originalRequest.headers?.['X-Entity-Type'];
+      const entityIdHeader = originalRequest.headers?.['X-Entity-Id'];
+
+      const conflictData: ConflictData = {
+        id: `conflict_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        entityId: responseData?.entityId ?? String(entityIdHeader ?? ''),
+        entityType: responseData?.entityType ?? String(entityTypeHeader ?? 'unknown'),
+        localData: originalRequest.data,
+        serverData: responseData?.serverVersion,
+        localVersion: clientVersionHeader ? Number(clientVersionHeader) : undefined,
+        serverVersion: responseData?.serverVersionNumber,
+        clientTimestamp: clientTimestampHeader ? Number(clientTimestampHeader) : Date.now(),
+        serverTimestamp: Date.now(),
+        endpoint: originalRequest.url ?? '',
+        method: (originalRequest.method ?? 'UNKNOWN').toUpperCase(),
+        detectedAt: Date.now(),
+      };
+
+      appLogger.warnSync('409 Conflict - mutation conflicts with server state', {
+        endpoint: originalRequest.url,
+        method: originalRequest.method,
+        entityType: conflictData.entityType,
+        entityId: conflictData.entityId,
+        localVersion: conflictData.localVersion,
+        serverVersion: conflictData.serverVersion,
+      });
+
+      // Add to conflict store for UI resolution
+      useConflictStore.getState().addConflict(conflictData);
+
+      return Promise.reject({
+        message: responseData?.message ?? 'Your changes conflict with newer server data',
+        status: 409,
+        code: 'CONFLICT',
+        conflict: conflictData,
       });
     }
 
@@ -357,12 +558,24 @@ apiClient.interceptors.response.use(
       });
     }
 
+    // ─── ECONNABORTED: Timeout — user-friendly message ──────────────────────
+
+    if (error.code === 'ECONNABORTED') {
+      const isUpload =
+        originalRequest.method?.toUpperCase() === 'POST' &&
+        originalRequest.data instanceof FormData;
+      return Promise.reject({
+        message: isUpload
+          ? 'Upload timed out. Please check your connection and try again.'
+          : 'Request timed out. Please check your connection and try again.',
+        status: 0,
+        code: 'ECONNABORTED',
+        timeout: originalRequest.timeout,
+      });
+    }
+
     // ─── Default fallback ──────────────────────────────────────────────────
 
-    // Unhandled response (e.g. 400, 404, 408, 410, 422). Never surface the raw
-    // AxiosError: its message/config can embed the full request URL. Capture
-    // the full url + method in Sentry request context (not the message), then
-    // reject with a generic, URL-free error for the UI. (Issue #579)
     sentryContextService.captureException(error, {
       tags: { 'api.error': 'unhandled_response' },
       contexts: {

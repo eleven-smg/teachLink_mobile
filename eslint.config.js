@@ -9,7 +9,7 @@ const jsxA11yPlugin = require('eslint-plugin-jsx-a11y');
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ['dist/*', '.rnstorybook/storybook.requires.ts', 'scripts/**'],
+    ignores: ['dist/*', '.rnstorybook/storybook.requires.ts', 'scripts/**', '**/_tests_/**'],
   },
   {
     files: ['**/*.{js,jsx,ts,tsx}'],
@@ -64,16 +64,22 @@ module.exports = defineConfig([
         },
       ],
       'react-hooks/rules-of-hooks': 'off',
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/exhaustive-deps': 'error',
       'import/no-unresolved': 'off',
 
       // Prevent inline component definitions that defeat memoization
-      'react/no-unstable-nested-components': ['warn', { allowAsProps: false }],
+      'react/no-unstable-nested-components': ['error', { allowAsProps: false }],
 
       'jsx-a11y/alt-text': 'warn',
       'jsx-a11y/aria-props': 'warn',
       'jsx-a11y/aria-proptypes': 'warn',
       'jsx-a11y/aria-unsupported-elements': 'warn',
+
+      // Enforce structured logging — use src/utils/logger instead of console.*
+      // Logger internals may reference console internally (excluded via ignores above).
+      // Note: `{ allow: [] }` is rejected by ESLint 9's rule schema, so use the
+      // bare 'error' form, which disallows every console method.
+      'no-console': 'error',
     },
   },
 ]);

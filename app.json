@@ -14,7 +14,8 @@
       "bundleIdentifier": "com.jaynomyaro.teachlink",
       "infoPlist": {
         "UIBackgroundModes": ["remote-notification"],
-        "NSCameraUsageDescription": "TeachLink uses the camera to scan QR codes and open deep links."
+        "NSCameraUsageDescription": "TeachLink uses the camera to scan QR codes and open deep links.",
+        "LSApplicationQueriesSchemes": ["cydia"]
       },
       "associatedDomains": ["applinks:teachlink.com", "applinks:www.teachlink.com"],
       "buildNumber": "1",
@@ -99,6 +100,14 @@
       "expo-speech-recognition",
       "expo-video",
       "./plugins/withProguard.js",
+      [
+        "./plugins/withSSLPinning",
+        {
+          "domain": "api.teachlink.com",
+          "primaryPin": "REPLACE_WITH_PRIMARY_SPKI_SHA256_BASE64==",
+          "backupPin": "REPLACE_WITH_BACKUP_SPKI_SHA256_BASE64=="
+        }
+      ],
       [
         "expo-build-properties",
         {

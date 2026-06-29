@@ -4,6 +4,7 @@ export * from './useAdaptiveTheme';
 export * from './useAnalytics';
 export { AuthProvider, useAuth } from './useAuth';
 export * from './useBiometricAuth';
+export * from './useRequireReauth';
 export * from './useCamera';
 export * from './useCoursePagination';
 export * from './useCourseProgress';
@@ -54,3 +55,6 @@ export type { UseSearchIndexResult } from './useSearchIndex';
 export { useAppUpdate } from './useAppUpdate';
 export type { UseAppUpdateResult, UseAppUpdateState, UseAppUpdateActions } from './useAppUpdate';
 
+// Intersection Observer / visibility hooks
+export * from './useIntersectionObserver';
+export * from './useViewabilityCallback';

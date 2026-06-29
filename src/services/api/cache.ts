@@ -472,6 +472,37 @@ export function invalidateCache(key: string): void {
   void removePersistentCache(key);
 }
 
+export function invalidateByPattern(pattern: RegExp): number {
+  let removed = 0;
+
+  for (const key of Array.from(store.keys())) {
+    if (pattern.test(key) && removeMemoryEntry(key)) {
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    invalidations += removed;
+    maybeReportCacheStats('invalidate:pattern');
+  }
+
+  void invalidatePersistentWhere(key => pattern.test(key));
+  return removed;
+}
+
+/**
+ * Invalidate every cache entry whose key matches `urlPattern` (Issue #597).
+ *
+ * Public alias of {@link invalidateByPattern}, used by the axios response
+ * interceptor to drop related GET caches immediately after a successful
+ * mutation so critical data (e.g. subscription status) is never served stale.
+ *
+ * @returns the number of entries removed.
+ */
+export function invalidatePattern(urlPattern: RegExp): number {
+  return invalidateByPattern(urlPattern);
+}
+
 export function invalidateCacheByPrefix(prefix: string): number {
   let removed = 0;
 

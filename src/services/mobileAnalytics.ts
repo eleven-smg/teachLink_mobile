@@ -1,5 +1,7 @@
 import { appLogger } from '../utils/logger';
 import { AnalyticsEvent, EventProperties } from '../utils/trackingEvents';
+import { AnalyticsBatchQueue } from './analytics/AnalyticsBatchQueue';
+import { DPConfig, privatizeDuration, sanitizeProperties } from '../utils/differentialPrivacy';
 
 /**
  * MobileAnalyticsService provides a centralized API for tracking user behavior
@@ -18,6 +20,8 @@ class MobileAnalyticsService {
   private currentSessionId: string | null = null;
   private currentScreen: string | null = null;
   private readonly throttledEventLastSentAt = new Map<string, number>();
+  private readonly batchQueue = new AnalyticsBatchQueue();
+  private dpConfig: DPConfig = { epsilon: 1.0, sensitivity: 1.0, enabled: true };
 
   // Critical events that must always be sent (100% volume)
   private readonly CRITICAL_EVENTS: Set<AnalyticsEvent> = new Set([
@@ -121,7 +125,7 @@ class MobileAnalyticsService {
     // Log to console/Metro for development visibility
     appLogger.info(`📊 [Analytics] Event: ${event}`, JSON.stringify(payload, null, 2));
 
-    // Real SDK call here: analytics().logEvent(event, privatized);
+    this.batchQueue.enqueue(event, payload);
   }
 
   private shouldThrottleHighFrequencyEvent(
@@ -209,6 +213,13 @@ class MobileAnalyticsService {
   public async resetUser(): Promise<void> {
     appLogger.info('👤 [Analytics] Reset User identity');
     // await analytics().setUserId(null);
+  }
+
+  /**
+   * Cleanup batch queue timers. Call on app teardown.
+   */
+  public destroy(): void {
+    this.batchQueue.destroy();
   }
 
   // ─── Private DP Helpers ──────────────────────────────────────────────────

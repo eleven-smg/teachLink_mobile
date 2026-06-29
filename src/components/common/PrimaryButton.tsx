@@ -1,13 +1,14 @@
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { memo } from 'react';
 import {
   TouchableOpacity,
   Text,
   ActivityIndicator,
-  View,
   ViewStyle,
   TextStyle,
+  Platform,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+
 import { useDynamicFontSize } from '../../hooks';
 
 /**
@@ -34,9 +35,11 @@ interface PrimaryButtonProps {
   icon?: React.ReactNode;
   accessibilityHint?: string;
   accessibilityLabel?: string;
+  /** Test ID for automated tests */
+  testID?: string;
 }
 
-function PrimaryButton({
+const PrimaryButton = ({
   onPress,
   title,
   loading = false,
@@ -48,7 +51,7 @@ function PrimaryButton({
   icon,
   accessibilityHint,
   accessibilityLabel,
-}: PrimaryButtonProps) {
+}: PrimaryButtonProps) => {
   const isDisabled = loading || disabled;
   const { scale } = useDynamicFontSize();
   const buttonLabel = accessibilityLabel ?? title;
@@ -87,6 +90,17 @@ function PrimaryButton({
         accessibilityLabel={buttonLabel}
         accessibilityHint={accessibilityHint}
         accessibilityState={{ disabled: isDisabled, busy: loading }}
+        {...Platform.select({
+          web: {
+            // WCAG 2.4.7: Focus Visible — show outline on keyboard focus
+            style: [
+              { opacity: isDisabled ? 0.6 : 1 },
+              style,
+              { outlineStyle: 'auto', outlineColor: '#586ce9', outlineOffset: 2 },
+            ] as any,
+          } as any,
+          default: {},
+        })}
       >
         <LinearGradient
           colors={['#20afe7', '#2c8aec', '#586ce9']}
@@ -198,6 +212,6 @@ function PrimaryButton({
       )}
     </TouchableOpacity>
   );
-}
+};
 
 export default memo(PrimaryButton);

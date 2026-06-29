@@ -1,5 +1,6 @@
 import { useRouter } from "expo-router";
 import { useEffect } from "react";
+
 import { useAuth } from "../hooks";
 import { sentryContextService } from "../services/sentryContext";
 
@@ -7,7 +8,7 @@ interface AuthGuardProps {
   children: React.ReactNode;
 }
 
-export function AuthGuard({ children }: AuthGuardProps) {
+export const AuthGuard = ({ children }: AuthGuardProps) => {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
 
@@ -24,7 +25,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       });
       router.replace("/login");
     }
-  }, [isAuthenticated, isLoading]);
+  }, [isAuthenticated, isLoading, router]);
 
   if (isLoading || !isAuthenticated) {
     return null;

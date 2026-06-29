@@ -1,11 +1,13 @@
 import Constants from 'expo-constants';
 import { isDevice } from 'expo-device';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { AppState, AppStateStatus, Platform } from 'react-native';
+
+import { featureCapabilities, FeatureStatus, FeatureType } from './featureCapabilities';
 import { useDegradationStore } from '../store/degradationStore';
+import { useNotificationStore } from '../store/notificationStore';
 import { NotificationData, NotificationType } from '../types/notifications';
 import logger from '../utils/logger';
-import { featureCapabilities, FeatureStatus, FeatureType } from './featureCapabilities';
 
 // Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -22,7 +24,7 @@ Notifications.setNotificationHandler({
  * Register for push notifications and get the Expo push token
  * Includes graceful degradation: if push notifications unavailable, falls back to in-app notifications
  */
-export async function registerForPushNotifications(): Promise<string | null> {
+export async function registerForPushNotifications(allowPrompt = false): Promise<string | null> {
   // Check device type using the proper 'isDevice' check from expo-device
   if (!isDevice) {
     logger.warn('Push notifications require a physical device (simulator detected)');
@@ -42,10 +44,14 @@ export async function registerForPushNotifications(): Promise<string | null> {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
-    // Request permissions if not granted
+    // Request permissions if not granted AND allowPrompt is true
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
+      if (allowPrompt) {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      } else {
+        return null;
+      }
     }
 
     if (finalStatus !== 'granted') {
@@ -235,7 +241,12 @@ export async function unregisterTokenFromBackend(token: string): Promise<boolean
 }
 
 /**
- * Schedule a local notification (useful for testing and reminders)
+ * Schedule a local notification (useful for testing and reminders).
+ *
+ * The `data` argument is validated and sanitised through
+ * `validateNotificationPayload` before being embedded in the notification
+ * content, preventing prototype-pollution vectors from reaching the
+ * notification subsystem.
  */
 export async function scheduleLocalNotification(
   title: string,
@@ -243,13 +254,18 @@ export async function scheduleLocalNotification(
   data: NotificationData,
   trigger?: Notifications.NotificationTriggerInput
 ): Promise<string> {
-  const channelId = getChannelId(data.type);
+  const safeData = validateNotificationPayload(data);
+  if (!safeData) {
+    throw new Error('scheduleLocalNotification: invalid or unsafe notification payload');
+  }
+
+  const channelId = getChannelId(safeData.type);
 
   return await Notifications.scheduleNotificationAsync({
     content: {
       title,
       body,
-      data: data as unknown as Record<string, unknown>,
+      data: safeData as unknown as Record<string, unknown>,
       sound: true,
       ...(Platform.OS === 'android' && { channelId }),
     },
@@ -315,6 +331,57 @@ export function addNotificationResponseListener(
  */
 export function removeNotificationListener(subscription: Notifications.Subscription): void {
   subscription.remove(); 
+}
+
+/**
+ * Get the last notification response (for handling app launch from notification)
+ */
+export async function getLastNotificationResponse(): Promise<Notifications.NotificationResponse | null> {
+  return await Notifications.getLastNotificationResponseAsync();
+}
+
+/**
+ * Fetch unread notification count from the server and sync badge.
+ * Falls back silently on network error.
+ */
+export async function syncBadgeFromServer(): Promise<void> {
+  try {
+    // TODO: Replace with actual API call when backend is ready
+    // const response = await apiClient.get('/api/notifications/unread-count');
+    // const unreadCount = response.data.count;
+    const unreadCount = useNotificationStore.getState().unreadCount;
+    useNotificationStore.getState().syncBadgeFromServer(unreadCount);
+    await Notifications.setBadgeCountAsync(unreadCount);
+  } catch (error) {
+    logger.warn('Failed to sync badge from server:', error);
+  }
+}
+
+let appStateSubscription: { remove: () => void } | null = null;
+
+/**
+ * Subscribe to AppState changes and sync badges on foreground.
+ * Should be called once during app initialization.
+ */
+export function setupForegroundBadgeSync(): () => void {
+  if (appStateSubscription) {
+    appStateSubscription.remove();
+  }
+
+  const handleAppStateChange = (nextState: AppStateStatus) => {
+    if (nextState === 'active') {
+      syncBadgeFromServer();
+    }
+  };
+
+  appStateSubscription = AppState.addEventListener('change', handleAppStateChange);
+
+  return () => {
+    if (appStateSubscription) {
+      appStateSubscription.remove();
+      appStateSubscription = null;
+    }
+  };
 }
 
 /**

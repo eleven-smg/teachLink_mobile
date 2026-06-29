@@ -25,6 +25,7 @@ import {
     type VideoSource,
 } from '../../services/videoQuality';
 import { ErrorBoundary } from '../common/ErrorBoundary';
+import { positionStore } from '../../services/positionStore';
 
 const AUTO_HIDE_MS = 3000;
 const DEFAULT_ASPECT_RATIO = 16 / 9;
@@ -56,7 +57,9 @@ export type MobileVideoPlayerProps = {
   onPlaybackStatusUpdate?: (status: AVPlaybackStatus) => void;
   /** Callback when video quality changes */
   onQualityChange?: (qualityId: string) => void;
-  /** Pass true when the connection is known to be slow (2G / slow-3G) */
+  /** Whether the player is currently active (on-screen) */
+  isActive?: boolean;
+  /** Whether to simulate a slow connection */
   isSlowConnection?: boolean;
 };
 
@@ -72,13 +75,16 @@ const MobileVideoPlayer = ({
   onError,
   onPlaybackStatusUpdate,
   onQualityChange,
-  isSlowConnection,
+  isActive = true,
+  isSlowConnection = false,
 }: MobileVideoPlayerProps) => {
   const videoRef = useRef<Video | null>(null);
   const autoPlayHandledRef = useRef(false);
   const lastToggleRef = useRef(0);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | (() => void) | null>(null);
   const resumeStatusRef = useRef<AVPlaybackStatusToSet | null>(null);
+  const positionSaveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sourceIdRef = useRef<string | null>(null);
 
   const [networkType, setNetworkType] = useState<NetworkType>('unknown');
   const [selectedQualityId, setSelectedQualityId] = useState(initialQualityId ?? AUTO_QUALITY_ID);
@@ -186,6 +192,12 @@ const MobileVideoPlayer = ({
     errorRef.current = error;
   }, [error]);
 
+  useEffect(() => {
+    if (!isActive) {
+      videoRef.current?.pauseAsync().catch(() => {});
+    }
+  }, [isActive]);
+
   const handleOverlayPress = useCallback(() => {
     setControlsVisible(true);
     handleGestureTap();
@@ -261,6 +273,55 @@ const MobileVideoPlayer = ({
     }
     setIsFullscreen(prev => !prev);
   }, [playbackRate]);
+
+  // Persist position when activeSource or isPlaying changes
+  useEffect(() => {
+    if (activeSource) {
+      sourceIdRef.current = activeSource.id;
+      if (isPlaying) {
+        const interval = setInterval(async () => {
+          try {
+            const status = await videoRef.current?.getStatusAsync();
+            if (status?.isLoaded) {
+              await positionStore.saveVideoPosition(
+                activeSource.id,
+                status.positionMillis,
+                status.durationMillis ?? 0,
+              );
+            }
+          } catch {
+            // ignore
+          }
+        }, 5000);
+        positionSaveIntervalRef.current = interval;
+        return () => clearInterval(interval);
+      }
+    }
+    return () => {};
+  }, [activeSource, isPlaying]);
+
+  // On unmount, save final position
+  useEffect(() => {
+    return () => {
+      const sid = sourceIdRef.current;
+      if (sid) {
+        videoRef.current?.getStatusAsync().then(status => {
+          if (status?.isLoaded) {
+            positionStore.saveVideoPosition(sid, status.positionMillis, status.durationMillis ?? 0);
+          }
+        }).catch(() => {});
+      }
+    };
+  }, []);
+
+  // Restore saved position when activeSource resolves
+  useEffect(() => {
+    if (!activeSource || isPlaying) return;
+    positionStore.getVideoPosition(activeSource.id).then(saved => {
+      if (!saved || saved.positionMillis < 1000) return;
+      videoRef.current?.setPositionAsync(saved.positionMillis).catch(() => {});
+    });
+  }, [activeSource, isPlaying]);
 
   const handlePlaybackStatusUpdate = useCallback(
     (status: AVPlaybackStatus) => {
@@ -468,7 +529,9 @@ const MobileVideoPlayer = ({
             source={videoSource}
             resizeMode={ResizeMode.CONTAIN}
             posterSource={posterUri ? { uri: posterUri } : undefined}
-            usePoster={!!posterUri}
+            usePoster={!isActive ? true : !!posterUri}
+            preload={isActive ? 'auto' : 'none'}
+            shouldPlay={!isActive ? false : undefined}
             onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
             onLoadStart={() => setIsLoading(true)}
             onReadyForDisplay={event => {

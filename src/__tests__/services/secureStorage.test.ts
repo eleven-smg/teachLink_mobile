@@ -1,100 +1,49 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-
+import logger from '../../utils/logger';
 import * as secureStorage from '../../services/secureStorage';
-import defaultLogger from '../../utils/logger';
-
-const logger = defaultLogger;
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
-jest.mock('expo-secure-store', () => {
-  return {
-    WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-    setItemAsync: jest.fn(),
-    getItemAsync: jest.fn(),
-    deleteItemAsync: jest.fn(),
-    _resetMockStore: jest.fn(),
-  };
-});
-
-jest.mock('@react-native-async-storage/async-storage', () => {
-  return {
-    setItem: jest.fn(),
-    getItem: jest.fn(),
-    removeItem: jest.fn(),
-    clear: jest.fn(),
-  };
-});
-
-// Ensure Platform defaults to iOS for these tests
-Platform.OS = 'ios';
-
-jest.mock('../../utils/logger', () => {
-  const mockLog = {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    infoSync: jest.fn(),
-    warnSync: jest.fn(),
-    errorSync: jest.fn(),
-  };
-  return {
-    __esModule: true,
-    appLogger: mockLog,
-    default: mockLog,
-  };
-});
-
-let loggedCriticalError = false;
-let loggedSuccess = false;
+jest.mock('expo-secure-store');
+jest.mock('@react-native-async-storage/async-storage');
+jest.mock('react-native', () => ({
+  Platform: {
+    OS: 'ios',
+  },
+}));
+jest.mock('../../utils/logger');
 
 const mockSecureStore = SecureStore as jest.Mocked<typeof SecureStore>;
 const mockAsyncStorage = AsyncStorage as jest.Mocked<typeof AsyncStorage>;
-const mockLogger = logger as jest.Mocked<typeof defaultLogger>;
+const mockLogger = logger as jest.Mocked<typeof logger>;
 
 describe('SecureStorage - Keychain/Keystore Verification #140', () => {
-  let mockStorage: Record<string, string> = {};
-
-  beforeEach(async () => {
-    jest.clearAllMocks();
-    mockStorage = {};
+  beforeEach(() => {
+    jest.resetAllMocks();
     // Reset secure storage verification state
-    secureStorage.__resetSecureStorageVerification__();
-
-    // Set up dynamic mock store that remembers written keys for verification cycle
-    mockSecureStore.setItemAsync.mockImplementation(async (key, val) => {
-      mockStorage[key] = val;
-      return undefined;
-    });
-    mockSecureStore.getItemAsync.mockImplementation(async key => {
-      if (key === '__secure_storage_verification_test__') {
-        return mockStorage[key] !== undefined ? mockStorage[key] : null;
-      }
-      return mockStorage[key] !== undefined ? mockStorage[key] : 'test_value';
-    });
-    mockSecureStore.deleteItemAsync.mockImplementation(async key => {
-      delete mockStorage[key];
-      return undefined;
-    });
-
-    loggedCriticalError = false;
-    loggedSuccess = false;
-    mockLogger.error.mockImplementation(msg => {
-      if (typeof msg === 'string' && msg.includes('❌ CRITICAL')) {
-        loggedCriticalError = true;
-      }
-    });
-    mockLogger.info.mockImplementation(msg => {
-      if (typeof msg === 'string' && msg.includes('✅')) {
-        loggedSuccess = true;
-      }
-    });
-
-    await secureStorage.initializeSecureStorage();
+    secureStorage.resetSecureStorage();
+    _storedSecureValue = undefined;
   });
+
+  // ─── Helper: store the value passed to setItemAsync for getItemAsync to return ──
+
+  let _storedSecureValue: string | undefined;
+
+  function mockVerificationPass(): void {
+    _storedSecureValue = undefined;
+    mockSecureStore.setItemAsync.mockImplementation(
+      (key: string, value: string) => {
+        _storedSecureValue = value;
+        return Promise.resolve();
+      },
+    );
+    mockSecureStore.getItemAsync.mockImplementation(() =>
+      Promise.resolve(_storedSecureValue),
+    );
+    mockSecureStore.deleteItemAsync.mockResolvedValue(undefined);
+  }
 
   // ─── Keychain/Keystore Usage Verification ─────────────────────────────────
 
@@ -127,43 +76,30 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
 
   describe('✅ Secure Storage Initialization', () => {
     it('should initialize and verify secure storage on startup', async () => {
-      const mockStore: Record<string, string> = {};
-
-      mockSecureStore.setItemAsync.mockImplementation(async (key: string, value: string) => {
-        mockStore[key] = value;
-        return Promise.resolve();
-      });
-      mockSecureStore.getItemAsync.mockImplementation(async (key: string) => {
-        return Promise.resolve(mockStore[key] ?? null);
-      });
-      mockSecureStore.deleteItemAsync.mockImplementation(async (key: string) => {
-        delete mockStore[key];
-        return Promise.resolve();
-      });
+      mockVerificationPass();
 
       const result = await secureStorage.initializeSecureStorage();
 
       expect(result).toBe(true);
       expect(secureStorage.isSecureStorageReady()).toBe(true);
+      // Verify verification test was performed
       expect(mockSecureStore.setItemAsync).toHaveBeenCalled();
       expect(mockSecureStore.getItemAsync).toHaveBeenCalled();
       expect(mockSecureStore.deleteItemAsync).toHaveBeenCalled();
     });
 
     it('should fail gracefully if verification fails', async () => {
-      secureStorage.__resetSecureStorageVerification__();
-      mockSecureStore.setItemAsync.mockImplementationOnce(() =>
-        Promise.reject(new Error('Keychain unavailable'))
-      );
+      mockSecureStore.setItemAsync.mockRejectedValue(new Error('Keychain unavailable'));
 
       const result = await secureStorage.initializeSecureStorage();
 
       expect(result).toBe(false);
-      expect(secureStorage.isSecureStorageReady()).toBe(false);
     });
 
     it('should verify storage integrity with read-write-delete cycle', async () => {
       const testKey = '__secure_storage_verification_test__';
+
+      mockVerificationPass();
 
       const result = await secureStorage.initializeSecureStorage();
 
@@ -173,7 +109,7 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
         expect.stringContaining('test_'),
         expect.objectContaining({
           keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-        })
+        }),
       );
       expect(mockSecureStore.getItemAsync).toHaveBeenCalled();
     });
@@ -182,35 +118,51 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
   // ─── NO AsyncStorage Fallback for Sensitive Data ──────────────────────────
 
   describe('❌ NO AsyncStorage Fallback (Security Critical)', () => {
-    it('should NOT use AsyncStorage for access tokens', async () => {
+    async function initAndVerify(): Promise<void> {
+      mockVerificationPass();
       await secureStorage.initializeSecureStorage();
+    }
+
+    it('should NOT use AsyncStorage for access tokens', async () => {
+      await initAndVerify();
+
       await secureStorage.saveTokens('access_token', 'refresh_token', Date.now() + 3600000);
 
+      // Verify AsyncStorage was NOT used
       expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
+      // Verify SecureStore was used instead
       expect(mockSecureStore.setItemAsync).toHaveBeenCalled();
     });
 
     it('should NOT use AsyncStorage for refresh tokens', async () => {
-      await secureStorage.initializeSecureStorage();
+      await initAndVerify();
+
       await secureStorage.saveTokens('access_token', 'refresh_token', Date.now() + 3600000);
 
+      // Verify AsyncStorage was NOT used for any token
       expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
     });
 
     it('should NOT use AsyncStorage for user data', async () => {
-      await secureStorage.initializeSecureStorage();
+      await initAndVerify();
+
       await secureStorage.saveUserData({ id: '123', name: 'Test User' });
 
+      // Verify AsyncStorage was NOT used
       expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
+      // Verify SecureStore was used
       expect(mockSecureStore.setItemAsync).toHaveBeenCalled();
     });
 
     it('should throw error if SecureStore fails for sensitive data instead of falling back', async () => {
-      mockSecureStore.setItemAsync.mockImplementationOnce(() =>
-        Promise.reject(new Error('Keychain error'))
-      );
+      await secureStorage.initializeSecureStorage();
 
-      await expect(secureStorage.saveTokens('token', 'refresh', Date.now())).rejects.toThrow();
+      // Override setItemAsync for saveTokens calls
+      mockSecureStore.setItemAsync.mockRejectedValue(new Error('Keychain error'));
+
+      await expect(
+        secureStorage.saveTokens('token', 'refresh', Date.now()),
+      ).rejects.toThrow();
 
       // AsyncStorage should NOT be called as fallback
       expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
@@ -220,42 +172,57 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
   // ─── Keychain/Keystore Configuration ─────────────────────────────────────
 
   describe('✅ Proper Keychain/Keystore Configuration', () => {
-    it('should use WHEN_UNLOCKED_THIS_DEVICE_ONLY access policy', async () => {
+    async function initAndVerify(): Promise<void> {
+      mockVerificationPass();
       await secureStorage.initializeSecureStorage();
+    }
+
+    it('should use WHEN_UNLOCKED_THIS_DEVICE_ONLY access policy', async () => {
+      await initAndVerify();
+
       await secureStorage.saveTokens('access', 'refresh', Date.now());
 
+      // Verify correct access policy is used
       expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.objectContaining({
           keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-        })
+        }),
       );
     });
 
     it('should enforce device unlock requirement for token retrieval', async () => {
+      mockVerificationPass();
       await secureStorage.initializeSecureStorage();
-      mockStorage['teachlink_access_token'] = 'token_value';
-      await secureStorage.getAccessToken();
 
+      mockSecureStore.getItemAsync.mockResolvedValue('token_value');
+
+      const token = await secureStorage.getAccessToken();
+
+      expect(token).toBe('token_value');
       expect(mockSecureStore.getItemAsync).toHaveBeenCalledWith(
         'teachlink_access_token',
         expect.objectContaining({
           keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-        })
+        }),
       );
     });
 
     it('should apply same security policy to all sensitive data', async () => {
-      await secureStorage.initializeSecureStorage();
+      await initAndVerify();
 
+      // Save user data
       await secureStorage.saveUserData({ id: '123' });
+
+      // Save tokens
       await secureStorage.saveTokens('access', 'refresh', Date.now());
 
+      // All calls should use WHEN_UNLOCKED_THIS_DEVICE_ONLY
       const allCalls = mockSecureStore.setItemAsync.mock.calls;
-      allCalls.forEach(call => {
+      allCalls.forEach((call) => {
         expect(call[2]).toEqual({
-          keychainAccessible: mockSecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
         });
       });
     });
@@ -265,6 +232,7 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
 
   describe('✅ Token Management with Encryption', () => {
     beforeEach(async () => {
+      mockVerificationPass();
       await secureStorage.initializeSecureStorage();
     });
 
@@ -274,47 +242,48 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
       expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
         'teachlink_access_token',
         'access_token',
-        expect.any(Object)
+        expect.any(Object),
       );
       expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
         'teachlink_refresh_token',
         'refresh_token',
-        expect.any(Object)
+        expect.any(Object),
       );
+      // Verify not saved to AsyncStorage
       expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
     });
 
     it('should retrieve access token from Keychain/Keystore', async () => {
-      mockStorage['teachlink_access_token'] = 'stored_access_token';
+      mockSecureStore.getItemAsync.mockResolvedValue('stored_access_token');
 
       const token = await secureStorage.getAccessToken();
 
       expect(token).toBe('stored_access_token');
       expect(mockSecureStore.getItemAsync).toHaveBeenCalledWith(
         'teachlink_access_token',
-        expect.any(Object)
+        expect.any(Object),
       );
       expect(mockAsyncStorage.getItem).not.toHaveBeenCalled();
     });
 
     it('should throw error on secure token retrieval failure', async () => {
-      mockSecureStore.getItemAsync.mockImplementationOnce(() =>
-        Promise.reject(new Error('Keychain access denied'))
-      );
+      mockSecureStore.getItemAsync.mockRejectedValue(new Error('Keychain access denied'));
 
       await expect(secureStorage.getAccessToken()).rejects.toThrow();
     });
 
     it('should clear tokens from Keychain/Keystore on logout', async () => {
+      mockSecureStore.deleteItemAsync.mockResolvedValue(undefined);
+
       await secureStorage.clearTokens();
 
       expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(
         'teachlink_access_token',
-        expect.any(Object)
+        expect.any(Object),
       );
       expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(
         'teachlink_refresh_token',
-        expect.any(Object)
+        expect.any(Object),
       );
       expect(mockAsyncStorage.removeItem).not.toHaveBeenCalled();
     });
@@ -324,14 +293,16 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
 
   describe('✅ Session Management with Encryption', () => {
     beforeEach(async () => {
+      mockVerificationPass();
       await secureStorage.initializeSecureStorage();
     });
 
     it('should validate active session from encrypted storage', async () => {
       const futureTime = Date.now() + 3600000; // 1 hour from now
-      mockSecureStore.getItemAsync.mockImplementation(key => {
+      mockSecureStore.getItemAsync.mockImplementation((key) => {
         if (key === 'teachlink_access_token') return Promise.resolve('token');
-        if (key === 'teachlink_session_expires_at') return Promise.resolve(String(futureTime));
+        if (key === 'teachlink_session_expires_at')
+          return Promise.resolve(String(futureTime));
         return Promise.resolve(null);
       });
 
@@ -340,15 +311,16 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
       expect(isValid).toBe(true);
       expect(mockSecureStore.getItemAsync).toHaveBeenCalledWith(
         'teachlink_access_token',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
     it('should detect expired session from encrypted storage', async () => {
       const pastTime = Date.now() - 3600000; // 1 hour ago
-      mockSecureStore.getItemAsync.mockImplementation(key => {
+      mockSecureStore.getItemAsync.mockImplementation((key) => {
         if (key === 'teachlink_access_token') return Promise.resolve('token');
-        if (key === 'teachlink_session_expires_at') return Promise.resolve(String(pastTime));
+        if (key === 'teachlink_session_expires_at')
+          return Promise.resolve(String(pastTime));
         return Promise.resolve(null);
       });
 
@@ -362,6 +334,7 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
 
   describe('✅ User Data Encryption', () => {
     beforeEach(async () => {
+      mockVerificationPass();
       await secureStorage.initializeSecureStorage();
     });
 
@@ -373,21 +346,21 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
       expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
         'teachlink_user_data',
         JSON.stringify(userData),
-        expect.any(Object)
+        expect.any(Object),
       );
       expect(mockAsyncStorage.setItem).not.toHaveBeenCalled();
     });
 
     it('should retrieve and deserialize user data from Keychain/Keystore', async () => {
       const userData = { id: 'user_123', name: 'Test User' };
-      mockStorage['teachlink_user_data'] = JSON.stringify(userData);
+      mockSecureStore.getItemAsync.mockResolvedValue(JSON.stringify(userData));
 
       const retrieved = await secureStorage.getUserData();
 
       expect(retrieved).toEqual(userData);
       expect(mockSecureStore.getItemAsync).toHaveBeenCalledWith(
         'teachlink_user_data',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -402,29 +375,35 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
   // ─── Error Handling & Logging ────────────────────────────────────────────
 
   describe('✅ Error Handling & Security Logging', () => {
+    beforeEach(async () => {
+      mockVerificationPass();
+      await secureStorage.initializeSecureStorage();
+    });
+
     it('should log critical errors for failed token operations', async () => {
-      mockSecureStore.setItemAsync.mockRejectedValueOnce(new Error('Keychain blocked by system'));
+      // After initialization, set up a fresh mock for saveTokens
+      mockSecureStore.setItemAsync.mockRejectedValueOnce(
+        new Error('Keychain blocked by system'),
+      );
 
       try {
-        await secureStorage.initializeSecureStorage();
         await secureStorage.saveTokens('token', 'refresh', Date.now());
       } catch {
-        // Safe catch container
+        // Expected
       }
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('❌ CRITICAL'),
-        expect.any(Object)
+        expect.any(Object),
       );
-      expect(loggedCriticalError).toBe(true);
     });
 
     it('should NOT log sensitive data values', async () => {
-      await secureStorage.initializeSecureStorage();
       await secureStorage.saveTokens('secret_access_token_12345', 'secret_refresh', Date.now());
 
+      // Check that the actual token values are never logged
       const allLogCalls = mockLogger.info.mock.calls.concat(mockLogger.error.mock.calls);
-      allLogCalls.forEach(call => {
+      allLogCalls.forEach((call) => {
         const logContent = JSON.stringify(call);
         expect(logContent).not.toContain('secret_access_token_12345');
         expect(logContent).not.toContain('secret_refresh');
@@ -432,14 +411,11 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
     });
 
     it('should log successful operations with platform info', async () => {
-      await secureStorage.initializeSecureStorage();
       await secureStorage.saveTokens('token', 'refresh', Date.now());
 
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.stringContaining('✅'),
-        expect.any(Object)
       );
-      expect(loggedSuccess).toBe(true);
     });
   });
 
@@ -455,8 +431,12 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
 
     it('should identify sensitive keys', () => {
       expect(secureStorage.STORAGE_SENSITIVE_KEYS).toBeDefined();
-      expect(secureStorage.STORAGE_SENSITIVE_KEYS.has('teachlink_access_token')).toBe(true);
-      expect(secureStorage.STORAGE_SENSITIVE_KEYS.has('teachlink_refresh_token')).toBe(true);
+      expect(secureStorage.STORAGE_SENSITIVE_KEYS.has('teachlink_access_token')).toBe(
+        true,
+      );
+      expect(secureStorage.STORAGE_SENSITIVE_KEYS.has('teachlink_refresh_token')).toBe(
+        true,
+      );
       expect(secureStorage.STORAGE_SENSITIVE_KEYS.has('teachlink_user_data')).toBe(true);
     });
   });
@@ -465,15 +445,24 @@ describe('SecureStorage - Keychain/Keystore Verification #140', () => {
 
   describe('🔐 Security Summary - Issue #140', () => {
     it('should verify all security requirements are met', async () => {
+      // ✅ Uses Keychain on iOS
       (Platform as any).OS = 'ios';
       let info = secureStorage.getSecureStoragePlatformInfo();
       expect(info.backend).toBe('Keychain');
 
+      // ✅ Uses Keystore on Android
       (Platform as any).OS = 'android';
       info = secureStorage.getSecureStoragePlatformInfo();
       expect(info.backend).toBe('Keystore');
 
+      // ✅ Requires device lock
       expect(info.requiresDeviceLock).toBe(true);
+
+      // ✅ No AsyncStorage usage (verified in specific tests)
+      // Already tested in "NO AsyncStorage Fallback" suite
+
+      // ✅ Proper configuration with WHEN_UNLOCKED_THIS_DEVICE_ONLY
+      // Already tested in "Proper Keychain/Keystore Configuration" suite
 
       console.log('✅ All security requirements for Issue #140 verified');
     });

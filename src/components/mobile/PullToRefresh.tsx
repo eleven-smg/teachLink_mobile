@@ -9,6 +9,7 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
+
 import { useAdaptiveFrameRate } from '../../hooks/useAdaptiveFrameRate';
 
 type AnyScrollComponent = React.ComponentType<any>;
@@ -57,7 +58,7 @@ function clamp(v: number, min: number, max: number): number {
  * - Avoids re-renders during drag by updating Animated.Value directly.
  * - Provides a screen-reader friendly button fallback (optional).
  */
-export function PullToRefresh(props: PullToRefreshProps) {
+export const PullToRefresh = (props: PullToRefreshProps) => {
   const {
     ScrollComponent = Animated.ScrollView,
     scrollProps,
@@ -97,7 +98,7 @@ export function PullToRefresh(props: PullToRefreshProps) {
     return () => {
       mounted = false;
       // RN types vary by version; guard-remove.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       (sub as any)?.remove?.();
     };
   }, []);
@@ -142,7 +143,7 @@ export function PullToRefresh(props: PullToRefreshProps) {
     [scrollProps]
   );
 
-  const canStartPull = () => !refreshing && scrollYRef.current <= 0;
+  const canStartPull = React.useCallback(() => !refreshing && scrollYRef.current <= 0, [refreshing]);
 
   const responderHandlers = React.useMemo(
     () => ({
@@ -200,7 +201,7 @@ export function PullToRefresh(props: PullToRefreshProps) {
       },
       onResponderTerminationRequest: () => true,
     }),
-    [animatePullTo, maxPull, pullY, refreshing, runRefresh, threshold]
+    [animatePullTo, canStartPull, maxPull, pullY, refreshing, runRefresh, threshold]
   );
 
   const progress = pullY.interpolate({

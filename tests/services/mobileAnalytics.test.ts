@@ -2,6 +2,16 @@ import { mobileAnalyticsService } from '../../src/services/mobileAnalytics';
 import { appLogger } from '../../src/utils/logger';
 import { AnalyticsEvent } from '../../src/utils/trackingEvents';
 
+jest.mock('../../src/services/api/axios.config', () => ({
+  __esModule: true,
+  default: {
+    get: jest.fn(() => Promise.resolve({ data: {} })),
+    post: jest.fn(() => Promise.resolve({ data: {} })),
+    put: jest.fn(() => Promise.resolve({ data: {} })),
+    delete: jest.fn(() => Promise.resolve({ data: {} })),
+  },
+}));
+
 jest.mock('../../src/utils/logger', () => {
   const mockLogger = {
     info: jest.fn(),
@@ -20,6 +30,10 @@ jest.mock('../../src/utils/logger', () => {
 describe('mobileAnalyticsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  afterAll(() => {
+    mobileAnalyticsService.destroy();
   });
 
   it('logs event payload when trackEvent is called', () => {

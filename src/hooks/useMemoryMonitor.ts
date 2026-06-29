@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { Platform, Alert } from 'react-native';
 import * as Device from 'expo-device';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform, Alert } from 'react-native';
+
+import { mobileAnalyticsService } from '../services/mobileAnalytics';
 import logger from '../utils/logger';
 import {
   captureMemorySnapshot,
@@ -8,7 +10,6 @@ import {
   formatBytes,
   MemorySnapshot,
 } from '../utils/memoryProfiler';
-import { mobileAnalyticsService } from '../services/mobileAnalytics';
 import { AnalyticsEvent } from '../utils/trackingEvents';
 
 interface MemoryMonitorOptions {
@@ -44,7 +45,7 @@ export function useMemoryMonitor({
 
   const snapshotsRef = useRef<MemorySnapshot[]>([]);
 
-  const logMemorySnapshot = (pointName: string, snapshot: MemorySnapshot) => {
+  const logMemorySnapshot = useCallback((pointName: string, snapshot: MemorySnapshot) => {
     if (snapshot.available) {
       logger.info(
         `[Memory Monitor] ${componentId} Snapshot [${pointName}]: ` +
@@ -56,7 +57,7 @@ export function useMemoryMonitor({
         `[Memory Monitor] ${componentId} Snapshot [${pointName}]: Hermes stats unavailable`
       );
     }
-  };
+  }, [componentId]);
 
   const performCheckRef = useRef<(trigger: string) => void>(() => {});
   performCheckRef.current = (trigger: string) => {
@@ -184,7 +185,7 @@ export function useMemoryMonitor({
       const final = captureMemorySnapshot();
       logMemorySnapshot('Unmount', final);
     };
-  }, []);
+  }, [logMemorySnapshot]);
 
   useEffect(() => {
     if (Platform.OS === 'android' && itemCount > thresholdWarning) {

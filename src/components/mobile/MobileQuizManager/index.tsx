@@ -45,6 +45,7 @@ export default function MobileQuizManager({
     goToQuestion,
     completeQuiz,
     resetSession,
+    initializeQuiz,
   } = useQuizStore();
 
   const [currentView, setCurrentView] = useState<QuizView>('intro');
@@ -54,10 +55,14 @@ export default function MobileQuizManager({
   const { trackPerfectQuiz } = useReviewMetrics();
 
   useEffect(() => {
-    loadQuizProgress(courseId);
+    const init = async () => {
+      await loadQuizProgress(courseId);
+      initializeQuiz(quiz.id);
+    };
+    void init();
     trackScreen(ScreenName.QUIZ, { quizId: quiz.id, courseId });
     setCurrentView('intro');
-  }, [courseId, loadQuizProgress]);
+  }, [courseId, quiz.id, loadQuizProgress, initializeQuiz, trackScreen]);
 
   const handleStartQuiz = async () => {
     try {
@@ -121,7 +126,7 @@ export default function MobileQuizManager({
     } catch (error) {
       logger.error('Error completing quiz:', error);
     }
-  }, [quiz, completeQuiz, navigation, course, onBack]);
+  }, [quiz, completeQuiz, navigation, course, onBack, courseId, requestReview, trackEvent, trackPerfectQuiz]);
 
   const handleRetakeQuiz = useCallback(async () => {
     await resetSession();

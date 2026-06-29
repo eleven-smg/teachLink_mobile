@@ -9,12 +9,24 @@
  * if (store.isFeatureDegraded('camera')) {
  *   // Show degradation banner
  * }
+ *
+ * Persistence notes:
+ * - `degradedFeatures` was previously typed as `Set<FeatureType>`.
+ *   JSON.stringify(new Set([...])) produces `{}` — an empty object — so the
+ *   Set was silently lost on every app restart.  It is now stored as a plain
+ *   `FeatureType[]` array (version 2) and converted to a Set only at read
+ *   time for O(1) membership tests via `selectDegradedFeaturesSet`.
+ * - The persistence `version` was bumped to 2 so that any previously-written
+ *   corrupt state (where degradedFeatures serialised as `{}`) is discarded and
+ *   the store starts fresh with correct defaults.
  */
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
-import { FeatureStatus, FeatureType } from './featureCapabilities';
+import { persist } from 'zustand/middleware';
+
+import { asyncStorageJSONStorage, createHydrationErrorRecovery } from './persistence';
+import { useFeatureFlagStore } from './featureFlagStore';
+import { FeatureStatus, FeatureType } from '../services/featureCapabilities';
 
 export interface DegradationNotification {
   id: string;
@@ -31,11 +43,14 @@ export interface DegradationPreferences {
   autoDismissDegradationAlerts: boolean; // Auto-dismiss alerts after 5 seconds
   remindPermissionRetry: boolean; // Remind user to grant permissions after 1 hour
   enableFallbackUX: boolean; // Use fallback UX when features unavailable (always true)
+  respectRemoteFlags: boolean; // Check remote feature flags before marking feature available
 }
 
 interface DegradationState {
-  // Track which features are degraded
-  degradedFeatures: Set<FeatureType>;
+  // Track which features are degraded.
+  // Stored as a plain array so Zustand's persist middleware can serialize it
+  // through JSON without data loss (Set serialises to {}).
+  degradedFeatures: FeatureType[];
   featureStatuses: Record<FeatureType, FeatureStatus>;
 
   // Notifications about degradation
@@ -59,6 +74,7 @@ interface DegradationState {
   setShowDegradationBanners: (show: boolean) => void;
   setAutoDismissAlerts: (autoDismiss: boolean) => void;
   setRemindPermissionRetry: (remind: boolean) => void;
+  setRespectRemoteFlags: (respect: boolean) => void;
 }
 
 const DEFAULT_PREFERENCES: DegradationPreferences = {
@@ -66,39 +82,63 @@ const DEFAULT_PREFERENCES: DegradationPreferences = {
   autoDismissDegradationAlerts: true,
   remindPermissionRetry: true,
   enableFallbackUX: true,
+  respectRemoteFlags: true,
 };
 
 let notificationIdCounter = 0;
 
+const createInitialDegradationState = () => ({
+  degradedFeatures: [],
+  featureStatuses: {
+    [FeatureType.CAMERA]: FeatureStatus.UNAVAILABLE,
+    [FeatureType.PUSH_NOTIFICATIONS]: FeatureStatus.UNAVAILABLE,
+    [FeatureType.LOCATION]: FeatureStatus.AVAILABLE,
+  },
+  notifications: [],
+  preferences: DEFAULT_PREFERENCES,
+});
+
+let resetDegradationStoreAfterHydrationError = () => {};
+
+/**
+ * Convert the stored `degradedFeatures` array to a Set for O(1) membership
+ * tests.  This is the canonical read-time selector; it does not mutate state.
+ */
+export function selectDegradedFeaturesSet(
+  state: Pick<DegradationState, 'degradedFeatures'>
+): Set<FeatureType> {
+  return new Set(state.degradedFeatures);
+}
+
 export const useDegradationStore = create<DegradationState>()(
   persist(
-    (set, get) => ({
+    (set, get): DegradationState => {
+      resetDegradationStoreAfterHydrationError = () => set(createInitialDegradationState());
+
+      return {
       // Initial state
-      degradedFeatures: new Set(),
-      featureStatuses: {
-        [FeatureType.CAMERA]: FeatureStatus.UNAVAILABLE,
-        [FeatureType.PUSH_NOTIFICATIONS]: FeatureStatus.UNAVAILABLE,
-        [FeatureType.LOCATION]: FeatureStatus.AVAILABLE,
-      },
-      notifications: [],
-      preferences: DEFAULT_PREFERENCES,
+      // Stored as FeatureType[] — not Set — to survive JSON round-trips.
+      ...createInitialDegradationState(),
 
       // Feature status actions
       setFeatureStatus: (feature, status) =>
-        set((state) => {
-          const newDegraded = new Set(state.degradedFeatures);
-          const isDegraded = status === FeatureStatus.PERMISSION_DENIED ||
-                            status === FeatureStatus.HARDWARE_UNAVAILABLE ||
-                            status === FeatureStatus.UNAVAILABLE;
+        set(state => {
+          const isDegraded =
+            status === FeatureStatus.PERMISSION_DENIED ||
+            status === FeatureStatus.HARDWARE_UNAVAILABLE ||
+            status === FeatureStatus.UNAVAILABLE;
 
+          // Use a Set for deduplication, then spread back to array for
+          // JSON-serialisability (Set -> {} under JSON.stringify).
+          const updatedSet = new Set(state.degradedFeatures);
           if (isDegraded) {
-            newDegraded.add(feature);
+            updatedSet.add(feature);
           } else {
-            newDegraded.delete(feature);
+            updatedSet.delete(feature);
           }
 
           return {
-            degradedFeatures: newDegraded,
+            degradedFeatures: [...updatedSet],
             featureStatuses: {
               ...state.featureStatuses,
               [feature]: status,
@@ -108,9 +148,21 @@ export const useDegradationStore = create<DegradationState>()(
 
       isFeatureDegraded: (feature: FeatureType): boolean => {
         const status = get().featureStatuses[feature];
-        return status === FeatureStatus.PERMISSION_DENIED ||
-               status === FeatureStatus.HARDWARE_UNAVAILABLE ||
-               status === FeatureStatus.UNAVAILABLE;
+        const hardwareDegraded =
+          status === FeatureStatus.PERMISSION_DENIED ||
+          status === FeatureStatus.HARDWARE_UNAVAILABLE ||
+          status === FeatureStatus.UNAVAILABLE;
+
+        if (hardwareDegraded) return true;
+
+        if (get().preferences.respectRemoteFlags) {
+          const featureFlags = useFeatureFlagStore.getState();
+          if (featureFlags.isEnabled(feature, true) === false) {
+            return true;
+          }
+        }
+
+        return false;
       },
 
       getDegradedFeatures: (): FeatureType[] => {
@@ -132,7 +184,7 @@ export const useDegradationStore = create<DegradationState>()(
           showedAt: new Date().toISOString(),
         };
 
-        set((state) => ({
+        set(state => ({
           notifications: [newNotification, ...state.notifications].slice(0, 50), // Keep last 50
         }));
 
@@ -140,8 +192,8 @@ export const useDegradationStore = create<DegradationState>()(
       },
 
       dismissNotification: (notificationId: string, action?: string) => {
-        set((state) => ({
-          notifications: state.notifications.map((n) =>
+        set(state => ({
+          notifications: state.notifications.map(n =>
             n.id === notificationId
               ? { ...n, dismissedAt: new Date().toISOString(), actionTaken: action }
               : n
@@ -154,35 +206,61 @@ export const useDegradationStore = create<DegradationState>()(
       },
 
       getUnreadNotifications: (): DegradationNotification[] => {
-        return get().notifications.filter((n) => !n.dismissedAt);
+        return get().notifications.filter(n => !n.dismissedAt);
       },
 
       // Preference actions
       setShowDegradationBanners: (show: boolean) => {
-        set((state) => ({
+        set(state => ({
           preferences: { ...state.preferences, showDegradationBanners: show },
         }));
       },
 
       setAutoDismissAlerts: (autoDismiss: boolean) => {
-        set((state) => ({
+        set(state => ({
           preferences: { ...state.preferences, autoDismissDegradationAlerts: autoDismiss },
         }));
       },
 
       setRemindPermissionRetry: (remind: boolean) => {
-        set((state) => ({
+        set(state => ({
           preferences: { ...state.preferences, remindPermissionRetry: remind },
         }));
       },
-    }),
+
+      setRespectRemoteFlags: (respect: boolean) => {
+        set(state => ({
+          preferences: { ...state.preferences, respectRemoteFlags: respect },
+        }));
+      },
+      };
+    },
     {
       name: 'degradation-store',
-      storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
+      storage: asyncStorageJSONStorage,
+      onRehydrateStorage: createHydrationErrorRecovery(
+        'degradation-store',
+        resetDegradationStoreAfterHydrationError
+      ),
+      /**
+       * Version 2: bumped from 1 (implicit) to discard any previously-persisted
+       * state where `degradedFeatures` was serialised as `{}` (empty object)
+       * due to JSON.stringify(Set) producing `{}`.
+       */
+      version: 2,
+      migrate: (_persistedState, _fromVersion) => {
+        // Any state written by version 1 (or earlier) had a corrupt
+        // `degradedFeatures: {}`.  Return undefined so Zustand falls back to
+        // the initial state defined above.
+        return undefined;
+      },
+      partialize: state => ({
         preferences: state.preferences,
         notifications: state.notifications,
         featureStatuses: state.featureStatuses,
+        // Include degradedFeatures so it survives app restarts.
+        // Safe to persist now that it is a plain array, not a Set.
+        degradedFeatures: state.degradedFeatures,
       }),
     }
   )

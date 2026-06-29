@@ -14,19 +14,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import * as IAP from 'react-native-iap';
-import { appLogger } from '../utils/logger';
+
 import { apiService } from './api';
+import { useAppStore } from '../store';
+import { useDeviceStore } from '../store/deviceStore';
+import { appLogger } from '../utils/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type SubscriptionTier = 'free' | 'pro' | 'premium';
 export type PurchaseType = 'subscription' | 'one_time';
-export type PurchaseStatus =
-  | 'pending'
-  | 'completed'
-  | 'failed'
-  | 'refunded'
-  | 'restored';
+export type PurchaseStatus = 'pending' | 'completed' | 'failed' | 'refunded' | 'restored';
 
 export interface SubscriptionPlan {
   id: string;
@@ -160,6 +158,11 @@ const STORAGE_KEYS = {
   SUBSCRIPTION_TIER: '@teachlink:subscription_tier',
 } as const;
 
+// ─── Validation constants ─────────────────────────────────────────────────────
+
+const MAX_VALIDATION_ATTEMPTS = 4; // up to 3 retries on network error
+const VALIDATION_BASE_DELAY_MS = 1_000;
+
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 class MobilePaymentsService {
@@ -174,26 +177,60 @@ class MobilePaymentsService {
     try {
       await IAP.initConnection();
 
-      IAP.purchaseUpdatedListener(async (purchase) => {
+      IAP.purchaseUpdatedListener(async purchase => {
         const receipt = purchase.transactionReceipt;
-        if (receipt) {
+        if (!receipt) return;
+
+        const store = useAppStore.getState();
+        if (store.receiptValidationPending) {
+          appLogger.warnSync('[Payments] Receipt validation already in progress — skipping duplicate');
+          return;
+        }
+
+        store.setReceiptValidationPending(true);
+        try {
           const result = await this.validateReceipt(
             receipt,
             Platform.OS as 'ios' | 'android',
+            purchase.productId
           );
+
           if (result.valid) {
             await IAP.finishTransaction({ purchase, isConsumable: false });
+            if (result.tier) {
+              await this._setTier(result.tier);
+            }
+          } else {
+            appLogger.errorSync(
+              '[Payments] Receipt rejected by server',
+              new Error(result.error ?? 'Receipt validation failed'),
+              { productId: purchase.productId }
+            );
           }
+        } catch (error) {
+          appLogger.errorSync(
+            '[Payments] Receipt validation failed after retries — purchase not completed',
+            error instanceof Error ? error : new Error(String(error)),
+            { productId: purchase.productId }
+          );
+        } finally {
+          useAppStore.getState().setReceiptValidationPending(false);
         }
       });
 
-      IAP.purchaseErrorListener((error) => {
-        appLogger.errorSync('[Payments] Purchase error', error instanceof Error ? error : new Error(String(error)));
+      IAP.purchaseErrorListener(error => {
+        appLogger.errorSync(
+          '[Payments] Purchase error',
+          error instanceof Error ? error : new Error(String(error))
+        );
       });
 
       this.isInitialized = true;
     } catch (error) {
-      appLogger.errorSync('[Payments] Initialize error', error instanceof Error ? error : new Error(String(error)));
+      appLogger.errorSync(
+        '[Payments] Initialize error',
+        error instanceof Error ? error : new Error(String(error))
+      );
       throw error;
     }
   }
@@ -211,8 +248,8 @@ class MobilePaymentsService {
   async getProducts(productIds: string[]): Promise<SubscriptionPlan[]> {
     try {
       const storeProducts = await IAP.getSubscriptions({ skus: productIds });
-      return storeProducts.map((sp) => {
-        const plan = SUBSCRIPTION_PLANS.find((p) => p.productId === sp.productId);
+      return storeProducts.map(sp => {
+        const plan = SUBSCRIPTION_PLANS.find(p => p.productId === sp.productId);
         return {
           id: plan?.id ?? sp.productId,
           productId: sp.productId,
@@ -227,8 +264,11 @@ class MobilePaymentsService {
         };
       });
     } catch (error) {
-      log.error('[Payments] getProducts error:', error);
-      return SUBSCRIPTION_PLANS.filter((p) => productIds.includes(p.productId));
+      appLogger.errorSync(
+        '[Payments] getProducts error',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return SUBSCRIPTION_PLANS.filter(p => productIds.includes(p.productId));
     }
   }
 
@@ -237,7 +277,8 @@ class MobilePaymentsService {
    * On real devices, IAP.requestSubscription opens the iOS/Android payment UI.
    */
   async purchaseSubscription(productId: string): Promise<PurchaseRecord> {
-    const plan = SUBSCRIPTION_PLANS.find((p) => p.productId === productId);
+    this._throwIfDeviceCompromised();
+    const plan = SUBSCRIPTION_PLANS.find(p => p.productId === productId);
     if (!plan) throw new Error(`Unknown product: ${productId}`);
 
     try {
@@ -259,8 +300,7 @@ class MobilePaymentsService {
         status: 'completed',
         purchasedAt: new Date().toISOString(),
         expiresAt: new Date(
-          Date.now() +
-            (plan.period === 'monthly' ? 30 : 365) * 24 * 60 * 60 * 1000,
+          Date.now() + (plan.period === 'monthly' ? 30 : 365) * 24 * 60 * 60 * 1000
         ).toISOString(),
         platform: Platform.OS as 'ios' | 'android',
       };
@@ -269,13 +309,17 @@ class MobilePaymentsService {
       await this._setTier(plan.tier);
       return record;
     } catch (error) {
-      log.error('[Payments] purchaseSubscription error:', error);
+      appLogger.errorSync(
+        '[Payments] purchaseSubscription error',
+        error instanceof Error ? error : new Error(String(error))
+      );
       throw error;
     }
   }
 
   /** Triggers a one-time consumable / non-consumable purchase. */
   async purchaseProduct(productId: string): Promise<PurchaseRecord> {
+    this._throwIfDeviceCompromised();
     try {
       await IAP.requestPurchase({ sku: productId });
 
@@ -295,7 +339,10 @@ class MobilePaymentsService {
       await this._savePurchaseRecord(record);
       return record;
     } catch (error) {
-      log.error('[Payments] purchaseProduct error:', error);
+      appLogger.errorSync(
+        '[Payments] purchaseProduct error',
+        error instanceof Error ? error : new Error(String(error))
+      );
       throw error;
     }
   }
@@ -315,18 +362,18 @@ class MobilePaymentsService {
           const result = await this.validateReceipt(
             receipt,
             Platform.OS as 'ios' | 'android',
-            purchase.productId,
+            purchase.productId
           );
           if (result.valid) {
             validated.push({
               id: purchase.transactionId,
               productId: purchase.productId,
               transactionId: purchase.transactionId,
-              amount: parseFloat(purchase.priceAmountMicros ? String(purchase.priceAmountMicros / 1000000) : '0'),
+              amount: parseFloat(
+                purchase.priceAmountMicros ? String(purchase.priceAmountMicros / 1000000) : '0'
+              ),
               currency: purchase.priceCurrencyCode ?? 'USD',
-              type: purchase.productId.includes('subscription')
-                ? 'subscription'
-                : 'one_time',
+              type: purchase.productId.includes('subscription') ? 'subscription' : 'one_time',
               status: 'restored',
               purchasedAt: purchase.transactionDate
                 ? new Date(purchase.transactionDate).toISOString()
@@ -335,36 +382,40 @@ class MobilePaymentsService {
               receiptData: receipt,
             });
             await IAP.finishTransaction({ purchase, isConsumable: false });
+          } else {
+            appLogger.infoSync(
+              `[Payments] restorePurchases: invalid receipt skipped for ${purchase.productId}`
+            );
           }
         }
+      }
+
+      // Update subscription tier for the most recently valid restored subscription
+      const activeSub = validated
+        .filter(p => p.type === 'subscription')
+        .sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())[0];
+      if (activeSub) {
+        const plan = SUBSCRIPTION_PLANS.find(p => p.productId === activeSub.productId);
+        if (plan) await this._setTier(plan.tier);
       }
 
       if (validated.length === 0) {
         // Fallback to local history for development
         const history = await this.getPurchaseHistory();
-        const restorable = history.filter((p) => p.status === 'completed');
+        const restorable = history.filter(p => p.status === 'completed');
 
         const activeSub = restorable
           .filter(
-            (p) =>
-              p.type === 'subscription' &&
-              p.expiresAt &&
-              new Date(p.expiresAt) > new Date(),
+            p => p.type === 'subscription' && p.expiresAt && new Date(p.expiresAt) > new Date()
           )
-          .sort(
-            (a, b) =>
-              new Date(b.purchasedAt).getTime() -
-              new Date(a.purchasedAt).getTime(),
-          )[0];
+          .sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime())[0];
 
         if (activeSub) {
-          const plan = SUBSCRIPTION_PLANS.find(
-            (p) => p.productId === activeSub.productId,
-          );
+          const plan = SUBSCRIPTION_PLANS.find(p => p.productId === activeSub.productId);
           if (plan) await this._setTier(plan.tier);
         }
 
-        return restorable.map((r) => ({
+        return restorable.map(r => ({
           ...r,
           status: 'restored' as PurchaseStatus,
         }));
@@ -372,14 +423,21 @@ class MobilePaymentsService {
 
       return validated;
     } catch (error) {
-      log.error('[Payments] restorePurchases error:', error);
+      appLogger.errorSync(
+        '[Payments] restorePurchases error',
+        error instanceof Error ? error : new Error(String(error))
+      );
       throw error;
     }
   }
 
   /**
    * Validates a purchase receipt against the server.
-   * The server should verify with Apple / Google using their validation APIs.
+   * The server verifies with Apple (/verifyReceipt) or Google (Play Developer API).
+   *
+   * Retries up to 3 times (4 total attempts) on network-level failures.
+   * Throws immediately on any server-returned error (4xx / 5xx) so the
+   * caller can distinguish a rejected receipt from a connectivity problem.
    *
    * Apple server validation:  https://buy.itunes.apple.com/verifyReceipt
    * Google server validation: https://www.googleapis.com/androidpublisher/v3/...
@@ -387,26 +445,34 @@ class MobilePaymentsService {
   async validateReceipt(
     receiptData: string,
     platform: 'ios' | 'android',
-    productId?: string,
+    productId?: string
   ): Promise<ReceiptValidationResult> {
-    try {
-      const response = await apiService.post('/payments/validate', {
-        receipt: receiptData,
-        platform,
-        productId,
-      });
-      return response.data as ReceiptValidationResult;
-    } catch {
-      // Fallback mock for development — remove in production
-      return {
-        valid: true,
-        expiry: new Date(
-          Date.now() + 30 * 24 * 60 * 60 * 1000,
-        ).toISOString(),
-        productId: productId ?? PRODUCT_IDS.PRO_MONTHLY,
-        tier: 'pro',
-      };
+    let lastNetworkError: unknown;
+
+    for (let attempt = 0; attempt < MAX_VALIDATION_ATTEMPTS; attempt++) {
+      try {
+        const response = await apiService.post('/api/payments/validate-receipt', {
+          receipt: receiptData,
+          platform,
+          productId,
+        });
+        return response.data as ReceiptValidationResult;
+      } catch (error) {
+        // Only retry on network-level failures (no response from server).
+        // 4xx / 5xx responses carry a body and must not be retried blindly.
+        const hasResponse = !!(error as { response?: unknown }).response;
+        if (hasResponse) throw error;
+
+        lastNetworkError = error;
+        if (attempt < MAX_VALIDATION_ATTEMPTS - 1) {
+          await new Promise(resolve =>
+            setTimeout(resolve, VALIDATION_BASE_DELAY_MS * Math.pow(2, attempt))
+          );
+        }
+      }
     }
+
+    throw lastNetworkError;
   }
 
   // ─── Storage helpers ────────────────────────────────────────────────────────
@@ -422,10 +488,7 @@ class MobilePaymentsService {
   }
 
   async clearPaymentData(): Promise<void> {
-    await AsyncStorage.multiRemove([
-      STORAGE_KEYS.PURCHASES,
-      STORAGE_KEYS.SUBSCRIPTION_TIER,
-    ]);
+    await AsyncStorage.multiRemove([STORAGE_KEYS.PURCHASES, STORAGE_KEYS.SUBSCRIPTION_TIER]);
   }
 
   // ─── Utilities ──────────────────────────────────────────────────────────────
@@ -445,16 +508,22 @@ class MobilePaymentsService {
 
   // ─── Private helpers ────────────────────────────────────────────────────────
 
+  private _throwIfDeviceCompromised(): void {
+    if (useDeviceStore.getState().isDeviceCompromised) {
+      throw new Error(
+        'Purchases are not available on this device. Your device appears to be jailbroken or rooted. Please use a secure device to complete purchases.'
+      );
+    }
+  }
+
   private async _savePurchaseRecord(record: PurchaseRecord): Promise<void> {
     const existing = await this.getPurchaseHistory();
-    await AsyncStorage.setItem(
-      STORAGE_KEYS.PURCHASES,
-      JSON.stringify([record, ...existing]),
-    );
+    await AsyncStorage.setItem(STORAGE_KEYS.PURCHASES, JSON.stringify([record, ...existing]));
   }
 
   private async _setTier(tier: SubscriptionTier): Promise<void> {
     await AsyncStorage.setItem(STORAGE_KEYS.SUBSCRIPTION_TIER, tier);
+    useAppStore.getState().setSubscriptionTier(tier);
   }
 }
 

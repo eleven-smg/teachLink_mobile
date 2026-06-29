@@ -1,6 +1,9 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
+import { getEnv } from '../config';
 import defaultLogger from '../utils/logger';
 
 const logger = defaultLogger;
@@ -37,6 +40,7 @@ const KEYS = {
   BIOMETRIC_ENABLED: 'teachlink_biometric_enabled',
   REMEMBERED_EMAIL: 'teachlink_remembered_email',
   REMEMBER_ME: 'teachlink_remember_me',
+  INSTALL_UUID: 'teachlink_install_uuid',
 } as const;
 
 // ─── Sensitive Keys (enforce Keychain/Keystore) ────────────────────────────────
@@ -197,6 +201,14 @@ export function isSecureStorageReady(): boolean {
   return isSecureStorageVerified;
 }
 
+/**
+ * Reset the secure storage initialization state.
+ * Intended for testing purposes only — allows tests to reset state between runs.
+ */
+export function resetSecureStorage(): void {
+  isSecureStorageVerified = false;
+}
+
 // ─── Token management ─────────────────────────────────────────────────────────
 
 /**
@@ -316,6 +328,41 @@ export async function isBiometricEnabled(): Promise<boolean> {
   return value === '1';
 }
 
+// ─── Install UUID & biometric reinstall guard ─────────────────────────────────
+
+const INSTALL_UUID_KEY = '@teachlink/install_uuid';
+
+function generateInstallUUID(): string {
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${Platform.OS}`;
+}
+
+async function checkHardwareBiometricEnrollment(): Promise<boolean> {
+  try {
+    const LocalAuthentication = require('expo-local-authentication');
+    const level = await LocalAuthentication.getEnrolledLevelAsync();
+    return level > 0;
+  } catch {
+    return true;
+  }
+}
+
+export async function verifyBiometricOnReinstall(): Promise<void> {
+  try {
+    const installUUID = await AsyncStorage.getItem(INSTALL_UUID_KEY);
+    if (installUUID) return;
+
+    const enrolled = await checkHardwareBiometricEnrollment();
+    if (!enrolled) {
+      await setBiometricEnabled(false);
+      logger.info('Biometric state reset on reinstall: no hardware enrollment');
+    }
+
+    await AsyncStorage.setItem(INSTALL_UUID_KEY, generateInstallUUID());
+  } catch (error) {
+    logger.error('Biometric reinstall verification failed:', error);
+  }
+}
+
 // ─── Remember Me ──────────────────────────────────────────────────────────────
 
 /**
@@ -367,6 +414,34 @@ export async function clearAllAuthData(): Promise<void> {
 
 // ─── Session validity ─────────────────────────────────────────────────────────
 
+const SESSION_EXPIRY_SOON_MS = 5 * 60 * 1_000; // 5 minutes
+
+export interface SessionValidityResult {
+  valid: boolean;
+  expiringSoon: boolean;
+  msUntilExpiry: number;
+}
+
+/**
+ * Check if the user session is valid based on stored expiration time.
+ * Reads from SecureStore — use this as the authoritative source on foreground.
+ */
+export async function checkSessionValidity(): Promise<SessionValidityResult> {
+  const expiresAt = await getSessionExpiresAt();
+
+  if (!expiresAt) return { valid: false, expiringSoon: false, msUntilExpiry: 0 };
+
+  const msUntilExpiry = expiresAt - Date.now();
+
+  if (msUntilExpiry <= 0) return { valid: false, expiringSoon: false, msUntilExpiry };
+
+  return {
+    valid: true,
+    expiringSoon: msUntilExpiry < SESSION_EXPIRY_SOON_MS,
+    msUntilExpiry,
+  };
+}
+
 /**
  * Check if the user session is valid based on stored expiration time
  */
@@ -377,6 +452,44 @@ export async function isSessionValid(): Promise<boolean> {
 
   // Consider session expired 30s early to allow refresh
   return expiresAt > Date.now() + 30_000;
+}
+
+interface RefreshTokenResponse {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}
+
+/**
+ * Refresh the access token using the stored refresh token.
+ */
+export async function refreshAccessToken(): Promise<RefreshTokenResponse> {
+  if (!isSecureStorageReady()) {
+    throw new Error('SecureStorage not initialized - cannot refresh tokens');
+  }
+
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    throw new Error('No refresh token available. Please log in again.');
+  }
+
+  const baseURL = getEnv('EXPO_PUBLIC_API_BASE_URL');
+  const { data } = await axios.post(`${baseURL}/auth/refresh`, {
+    refreshToken,
+  });
+
+  const tokens = data?.tokens ?? data;
+  if (!tokens?.accessToken || !tokens?.refreshToken || !tokens?.expiresAt) {
+    throw new Error('Refresh response did not include a complete token set.');
+  }
+
+  await saveTokens(tokens.accessToken, tokens.refreshToken, tokens.expiresAt);
+
+  return {
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    expiresAt: tokens.expiresAt,
+  };
 }
 
 // ─── Export manifest (for verification in tests) ────────────────────────────────

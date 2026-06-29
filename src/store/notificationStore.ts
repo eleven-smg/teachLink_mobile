@@ -1,6 +1,7 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
+
+import { asyncStorageJSONStorage, createHydrationErrorRecovery } from './persistence';
 import {
     DEFAULT_NOTIFICATION_PREFERENCES,
     NotificationData,
@@ -9,6 +10,7 @@ import {
     NotificationType,
     StoredNotification,
 } from '../types/notifications';
+import { appLogger } from '../utils/logger';
 
 interface NotificationState {
   // Push token state
@@ -19,6 +21,7 @@ interface NotificationState {
   // Permission state
   hasPromptedForPermission: boolean;
   permissionDeniedAt: string | null;
+  showNotificationExplainer: boolean;
 
   // Notification preferences
   preferences: NotificationPreferences;
@@ -28,7 +31,7 @@ interface NotificationState {
   unreadCount: number;
   notificationHistory: NotificationHistoryEntry[];
   lastEngagedAt: string | null;
-  lastNotificationSentAtByType: Partial<Record<NotificationType, string>>;
+  lastNotificationSentAtByType: Partial<Record<NotificationType, number>>;
 
   // Actions - Push token
   setPushToken: (token: string | null) => void;
@@ -38,6 +41,7 @@ interface NotificationState {
   // Actions - Permission
   setHasPromptedForPermission: (prompted: boolean) => void;
   setPermissionDeniedAt: (date: string | null) => void;
+  setShowNotificationExplainer: (show: boolean) => void;
 
   // Actions - Preferences
   setPreference: (key: keyof NotificationPreferences, value: boolean) => void;
@@ -56,23 +60,38 @@ interface NotificationState {
 
   // Helpers
   isNotificationTypeEnabled: (type: NotificationType) => boolean;
+
+  // Badge sync
+  syncBadgeFromServer: (unreadCount: number) => void;
+  getLastBadgeSyncAt: () => number | null;
 }
+
+const createInitialNotificationState = () => ({
+  pushToken: null,
+  isTokenRegistered: false,
+  tokenLastUpdated: null,
+  hasPromptedForPermission: false,
+  permissionDeniedAt: null,
+  showNotificationExplainer: false,
+  preferences: DEFAULT_NOTIFICATION_PREFERENCES,
+  notifications: [],
+  unreadCount: 0,
+  notificationHistory: [],
+  lastEngagedAt: null,
+  lastNotificationSentAtByType: {},
+  lastBadgeSyncAt: null as number | null,
+});
+
+let resetNotificationStoreAfterHydrationError = () => {};
 
 export const useNotificationStore = create<NotificationState>()(
   persist(
-    (set, get) => ({
+    (set, get): NotificationState => {
+      resetNotificationStoreAfterHydrationError = () => set(createInitialNotificationState());
+
+      return {
       // Initial state
-      pushToken: null,
-      isTokenRegistered: false,
-      tokenLastUpdated: null,
-      hasPromptedForPermission: false,
-      permissionDeniedAt: null,
-      preferences: DEFAULT_NOTIFICATION_PREFERENCES,
-      notifications: [],
-      unreadCount: 0,
-      notificationHistory: [],
-      lastEngagedAt: null,
-      lastNotificationSentAtByType: {},
+      ...createInitialNotificationState(),
 
       // Push token actions
       setPushToken: token =>
@@ -95,6 +114,8 @@ export const useNotificationStore = create<NotificationState>()(
 
       setPermissionDeniedAt: date => set({ permissionDeniedAt: date }),
 
+      setShowNotificationExplainer: show => set({ showNotificationExplainer: show }),
+
       // Preference actions
       setPreference: (key, value) =>
         set(state => ({
@@ -111,13 +132,13 @@ export const useNotificationStore = create<NotificationState>()(
       // Notification actions
       addNotification: notification =>
         set(state => {
-          const now = new Date().toISOString();
+          const now = Date.now();
           const fingerprint = buildNotificationFingerprint(notification);
           const dedupeWindowMinutes = 10;
-          const cutoff = new Date(Date.now() - dedupeWindowMinutes * 60 * 1000);
+          const cutoff = Date.now() - dedupeWindowMinutes * 60 * 1000;
 
           const recentHistory = state.notificationHistory.filter(
-            entry => new Date(entry.receivedAt).getTime() >= cutoff.getTime()
+            entry => entry.receivedAt >= cutoff
           );
 
           const isDuplicate = recentHistory.some(entry => entry.fingerprint === fingerprint);
@@ -228,7 +249,7 @@ export const useNotificationStore = create<NotificationState>()(
         const lastSentAt = state.lastNotificationSentAtByType[type];
 
         if (lastSentAt) {
-          const elapsedMinutes = (now.getTime() - new Date(lastSentAt).getTime()) / (1000 * 60);
+          const elapsedMinutes = (now.getTime() - lastSentAt) / (1000 * 60);
           if (elapsedMinutes < thresholdMinutes) {
             return true;
           }
@@ -237,7 +258,7 @@ export const useNotificationStore = create<NotificationState>()(
         set({
           lastNotificationSentAtByType: {
             ...state.lastNotificationSentAtByType,
-            [type]: now.toISOString(),
+            [type]: now.getTime(),
           },
         });
         return false;
@@ -275,10 +296,55 @@ export const useNotificationStore = create<NotificationState>()(
             return true;
         }
       },
-    }),
+
+      // Badge sync
+      syncBadgeFromServer: (unreadCount: number) => {
+        set({ unreadCount, lastBadgeSyncAt: Date.now() });
+        appLogger.infoSync('Badge count synced from server', { unreadCount });
+      },
+      getLastBadgeSyncAt: () => get().lastBadgeSyncAt,
+      };
+    },
     {
       name: 'notification-storage',
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: asyncStorageJSONStorage,
+      version: 2,
+      migrate: (persistedState, version) => {
+        if (version < 2) {
+          const state =
+            typeof persistedState === 'string'
+              ? (JSON.parse(persistedState) as any)
+              : { ...(persistedState as any) };
+          // Convert notification timestamps
+          if (Array.isArray(state.notifications)) {
+            state.notifications = state.notifications.map((n: any) => ({
+              ...n,
+              receivedAt: typeof n.receivedAt === 'string' ? new Date(n.receivedAt).getTime() : n.receivedAt,
+            }));
+          }
+          // Convert history timestamps
+          if (Array.isArray(state.notificationHistory)) {
+            state.notificationHistory = state.notificationHistory.map((h: any) => ({
+              ...h,
+              receivedAt: typeof h.receivedAt === 'string' ? new Date(h.receivedAt).getTime() : h.receivedAt,
+            }));
+          }
+          // Convert throttle timestamps
+          if (state.lastNotificationSentAtByType) {
+            const converted: Record<string, number> = {};
+            Object.entries(state.lastNotificationSentAtByType).forEach(([k, v]) => {
+              converted[k] = typeof v === 'string' ? new Date(v as string).getTime() : (v as number);
+            });
+            state.lastNotificationSentAtByType = converted;
+          }
+          return state;
+        }
+        return persistedState;
+      },
+      onRehydrateStorage: createHydrationErrorRecovery(
+        'notification-storage',
+        resetNotificationStoreAfterHydrationError
+      ),
       partialize: state => ({
         // Only persist these fields
         pushToken: state.pushToken,

@@ -28,6 +28,7 @@ export interface NotificationData {
   achievementId?: string;
   postId?: string;
   deepLink?: string;
+  screenName?: string;
 }
 
 export interface StoredNotification {
@@ -36,14 +37,14 @@ export interface StoredNotification {
   title: string;
   body: string;
   data?: NotificationData;
-  receivedAt: string;
+  receivedAt: number;
   read: boolean;
   groupCount?: number;
 }
 
 export interface NotificationHistoryEntry {
   fingerprint: string;
-  receivedAt: string;
+  receivedAt: number;
 }
 
 export interface PushTokenState {

@@ -10,7 +10,10 @@ jest.mock('react-native', () => ({
   View: 'View',
   Text: 'Text',
   TouchableOpacity: 'TouchableOpacity',
-  KeyboardAvoidingView: 'KeyboardAvoidingView',
+  KeyboardAvoidingView: Object.assign(
+    ({ children, ...props }) => children,
+    { displayName: 'KeyboardAvoidingView' }
+  ),
   Modal: 'Modal',
   SafeAreaView: 'SafeAreaView',
   ScrollView: 'ScrollView',
@@ -74,7 +77,8 @@ jest.mock('react-native', () => ({
     createAnimatedComponent: jest.fn(component => component),
   },
   Alert: { alert: jest.fn() },
-  Keyboard: { avoidView: 'KeyboardAvoidingView', dismiss: jest.fn() },
+  KeyboardAvoidingView: ({ children }) => children,
+  Keyboard: { dismiss: jest.fn() },
   FlatList: 'FlatList',
   SectionList: 'SectionList',
   StatusBar: 'StatusBar',
@@ -122,21 +126,6 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   getAllKeys: jest.fn(() => Promise.resolve([])),
   multiGet: jest.fn(() => Promise.resolve([])),
   multiSet: jest.fn(() => Promise.resolve()),
-}));
-
-// Mock Sentry for native-less Jest environment
-jest.mock('@sentry/react-native', () => ({
-  init: jest.fn(),
-  captureException: jest.fn(),
-  captureMessage: jest.fn(),
-  addBreadcrumb: jest.fn(),
-  setTag: jest.fn(),
-  setUser: jest.fn(),
-  configureScope: jest.fn(fn => fn && fn({})),
-  withScope: jest.fn(fn => fn && fn({})),
-  NativeModules: {
-    RNSentry: {},
-  },
 }));
 
 // Mock expo-secure-store to avoid ESM issues
@@ -283,7 +272,6 @@ jest.mock('expo-notifications', () => ({
   getExpoPushTokenAsync: jest.fn(() =>
     Promise.resolve({ data: 'ExponentPushToken[test-token-123]' })
   ),
-  setNotificationChannelAsync: jest.fn(() => Promise.resolve()),
   scheduleNotificationAsync: jest.fn(() => Promise.resolve('notification-id')),
   cancelScheduledNotificationAsync: jest.fn(() => Promise.resolve()),
   cancelAllScheduledNotificationsAsync: jest.fn(() => Promise.resolve()),
@@ -312,13 +300,8 @@ jest.mock('expo-battery', () => ({
     Promise.resolve({ batteryLevel: 1, batteryState: 1, lowPowerMode: false })
   ),
   addLowPowerModeListener: jest.fn(() => ({ remove: jest.fn() })),
-  BatteryState: {
-    UNKNOWN: 0,
-    UNPLUGGED: 1,
-    CHARGING: 2,
-    FULL: 3,
-  },
 }));
+
 
 // Lightweight mock for expo-router to avoid pulling in navigation internals during tests
 jest.mock(
@@ -359,7 +342,7 @@ jest.mock(
   { virtual: true }
 );
 
-// Mock @sentry/react-native to prevent Jest environment failure
+// Mock @sentry/react-native with comprehensive API surface
 jest.mock('@sentry/react-native', () => ({
   init: jest.fn(),
   wrap: jest.fn(component => component),
@@ -368,11 +351,16 @@ jest.mock('@sentry/react-native', () => ({
   setUser: jest.fn(),
   clearBreadcrumbs: jest.fn(),
   addBreadcrumb: jest.fn(),
+  withScope: jest.fn(),
+  configureScope: jest.fn(),
+  setContext: jest.fn(),
+  setExtra: jest.fn(),
   ReactNavigationInstrumentation: jest.fn(),
   ReactNativeTracing: jest.fn(),
   Native: {
     RNSentry: {},
   },
+  Severity: { Error: 'error', Warning: 'warning', Log: 'log' },
   SDK_NAME: 'sentry.javascript.react-native',
   SDK_VERSION: '5.36.0',
 }));
@@ -386,17 +374,6 @@ jest.mock('expo-sensors', () => ({
     isAvailableAsync: jest.fn(() => Promise.resolve(true)),
   },
 }));
-
-// Mock react-native-safe-area-context to prevent css-interop Safe Area Provider errors in tests
-jest.mock('react-native-safe-area-context', () => {
-  const RN = require('react-native');
-  return {
-    SafeAreaProvider: RN.View,
-    SafeAreaView: RN.View,
-    useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
-    useSafeAreaFrame: () => ({ x: 0, y: 0, width: 390, height: 844 }),
-  };
-});
 
 // Mock react-native-reanimated with a stable custom lightweight implementation globally
 jest.mock('react-native-reanimated', () => {
@@ -477,3 +454,12 @@ jest.mock('expo-store-review', () => ({
   hasAction: jest.fn(() => Promise.resolve(true)),
   storeUrl: jest.fn(() => Promise.resolve('https://apps.apple.com/app/teachlink/id1234567890')),
 }));
+
+// Mock expo-linear-gradient for jest tests
+jest.mock('expo-linear-gradient', () => {
+  const RN = require('react-native');
+  return {
+    LinearGradient: RN.View,
+  };
+});
+
